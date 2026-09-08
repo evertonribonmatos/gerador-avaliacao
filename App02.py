@@ -24,14 +24,13 @@ TOTAL_QUESTOES = 10
 MODELO_PRINCIPAL = "openai/gpt-oss-120b"
 LARGURA_IMAGEM_POLEGADAS = 4.8
 
-TEMPERATURA_GERACAO = 0.55
+TEMPERATURA_GERACAO = 0.45
 MAX_TENTATIVAS_MODELO = 3
-MAX_TENTATIVAS_POR_QUESTAO = 4
+MAX_TENTATIVAS_POR_QUESTAO = 5
 
 TAMANHO_MINIMO_CONTEXTO = 180
 SIMILARIDADE_MAXIMA_PERMITIDA = 0.72
 
-# Caminho do Tesseract OCR no Windows
 CAMINHO_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 if os.path.exists(CAMINHO_TESSERACT):
     pytesseract.pytesseract.tesseract_cmd = CAMINHO_TESSERACT
@@ -52,9 +51,7 @@ def obter_groq_api_key() -> str:
     if chave_env:
         return chave_env
 
-    raise ValueError(
-        "GROQ_API_KEY não encontrada. Configure em st.secrets ou no arquivo .env."
-    )
+    raise ValueError("GROQ_API_KEY não encontrada. Configure em st.secrets ou no arquivo .env.")
 
 GROQ_API_KEY = obter_groq_api_key()
 client = Groq(api_key=GROQ_API_KEY)
@@ -125,35 +122,112 @@ def similaridade_textual_simples(a: str, b: str) -> float:
     uniao = len(a_tokens | b_tokens)
     return inter / uniao if uniao else 0.0
 
-def contem_termos_proibidos_sem_suporte(contexto: str, possui_imagem: bool) -> Optional[str]:
-    texto = normalizar_texto(contexto).lower()
+def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
+    texto = normalizar_texto(contexto)
 
-    termos_proibidos_gerais = [
-        "tabela", "relatório", "relatorio", "gráfico", "grafico",
-        "laudo", "planilha", "prontuário", "prontuario", "anexo",
-        "dados da tabela", "conforme tabela", "segundo o relatório",
-        "de acordo com o relatório", "com base no relatório"
+    substituicoes = [
+        (r"\bcom base no relatório\b", "com base nas informações do cenário"),
+        (r"\bde acordo com o relatório\b", "de acordo com as informações apresentadas"),
+        (r"\bconforme o relatório\b", "conforme as informações do caso"),
+        (r"\banalise o relatório\b", "analise a situação apresentada"),
+        (r"\bo relatório apresenta\b", "o cenário apresenta"),
+        (r"\bsegundo o relatório\b", "segundo as informações apresentadas"),
+        (r"\bcom base na tabela\b", "com base nos dados apresentados no enunciado"),
+        (r"\bde acordo com a tabela\b", "de acordo com os dados apresentados no enunciado"),
+        (r"\bconforme a tabela\b", "conforme os dados apresentados"),
+        (r"\bobserve a tabela\b", "analise os dados apresentados"),
+        (r"\bobserve o gráfico\b", "analise o comportamento descrito"),
+        (r"\bcom base no gráfico\b", "com base no comportamento descrito"),
+        (r"\bde acordo com o gráfico\b", "de acordo com o comportamento descrito"),
+        (r"\bconforme o gráfico\b", "conforme o comportamento descrito"),
+        (r"\bcom base no laudo\b", "com base nas informações técnicas fornecidas"),
+        (r"\bde acordo com o laudo\b", "de acordo com as informações técnicas fornecidas"),
+        (r"\bconforme o laudo\b", "conforme as informações técnicas fornecidas"),
+        (r"\bem anexo\b", ""),
+        (r"\bno anexo\b", ""),
+        (r"\bprontuário\b", "registro técnico"),
+        (r"\bplanilha\b", "registro de dados"),
     ]
 
-    termos_visuais = [
-        "figura", "imagem", "diagrama", "ilustração", "ilustracao",
-        "esquema abaixo", "figura abaixo", "imagem abaixo"
-    ]
-
-    for termo in termos_proibidos_gerais:
-        if termo in texto:
-            return termo
+    for padrao, repl in substituicoes:
+        texto = re.sub(padrao, repl, texto, flags=re.IGNORECASE)
 
     if not possui_imagem:
-        for termo in termos_visuais:
-            if termo in texto:
-                return termo
+        substituicoes_visuais = [
+            (r"\bobserve a figura\b", "considere a situação apresentada"),
+            (r"\bcom base na figura\b", "com base na situação apresentada"),
+            (r"\bde acordo com a figura\b", "de acordo com a situação apresentada"),
+            (r"\bconforme a figura\b", "conforme a situação apresentada"),
+            (r"\bobserve a imagem\b", "considere a situação apresentada"),
+            (r"\bcom base na imagem\b", "com base na situação apresentada"),
+            (r"\bde acordo com a imagem\b", "de acordo com a situação apresentada"),
+            (r"\bconforme a imagem\b", "conforme a situação apresentada"),
+            (r"\bobserve o diagrama\b", "considere a situação apresentada"),
+            (r"\bcom base no diagrama\b", "com base na situação apresentada"),
+            (r"\bde acordo com o diagrama\b", "de acordo com a situação apresentada"),
+            (r"\bconforme o diagrama\b", "conforme a situação apresentada"),
+        ]
+        for padrao, repl in substituicoes_visuais:
+            texto = re.sub(padrao, repl, texto, flags=re.IGNORECASE)
+
+    texto = re.sub(r"\s{2,}", " ", texto)
+    return normalizar_texto(texto)
+
+def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional[str]:
+    texto = normalizar_texto(contexto).lower()
+
+    padroes_indevidos = [
+        r"\bcom base no relatório\b",
+        r"\bde acordo com o relatório\b",
+        r"\bconforme o relatório\b",
+        r"\banalise o relatório\b",
+        r"\bo relatório apresenta\b",
+        r"\bsegundo o relatório\b",
+        r"\bcom base na tabela\b",
+        r"\bde acordo com a tabela\b",
+        r"\bconforme a tabela\b",
+        r"\bobserve a tabela\b",
+        r"\bobserve o gráfico\b",
+        r"\bcom base no gráfico\b",
+        r"\bde acordo com o gráfico\b",
+        r"\bconforme o gráfico\b",
+        r"\bcom base no laudo\b",
+        r"\bde acordo com o laudo\b",
+        r"\bconforme o laudo\b",
+        r"\bem anexo\b",
+        r"\bno anexo\b",
+    ]
+
+    for padrao in padroes_indevidos:
+        if re.search(padrao, texto):
+            return padrao
+
+    if not possui_imagem:
+        padroes_visuais = [
+            r"\bobserve a figura\b",
+            r"\bcom base na figura\b",
+            r"\bde acordo com a figura\b",
+            r"\bconforme a figura\b",
+            r"\bobserve a imagem\b",
+            r"\bcom base na imagem\b",
+            r"\bde acordo com a imagem\b",
+            r"\bconforme a imagem\b",
+            r"\bobserve o diagrama\b",
+            r"\bcom base no diagrama\b",
+            r"\bde acordo com o diagrama\b",
+            r"\bconforme o diagrama\b",
+            r"\bfigura abaixo\b",
+            r"\bimagem abaixo\b",
+            r"\bdiagrama abaixo\b",
+        ]
+        for padrao in padroes_visuais:
+            if re.search(padrao, texto):
+                return padrao
 
     return None
 
 def contem_generico_demais(contexto: str) -> bool:
     texto = normalizar_texto(contexto).lower()
-
     padroes_genericos = [
         "explique o que é",
         "defina",
@@ -163,7 +237,6 @@ def contem_generico_demais(contexto: str) -> bool:
         "o que é manutenção",
         "o que é motor trifásico"
     ]
-
     return any(p in texto for p in padroes_genericos)
 
 def validar_bloom(bloom: str) -> str:
@@ -244,7 +317,6 @@ def montar_prompt_questao_unica(
     feedback_erro: str = ""
 ) -> str:
     resumo_anteriores = montar_resumo_questoes_anteriores(questoes_anteriores)
-
     possui_imagem = "sim" if questao_atual.get("imagem_bytes") else "não"
     ocr = normalizar_texto(questao_atual.get("ocr_imagem", ""))
 
@@ -256,16 +328,16 @@ IMAGEM ASSOCIADA À QUESTÃO:
 - Texto extraído por OCR:
 {ocr if ocr else "Nenhum texto legível foi extraído da imagem."}
 
-REGRAS ESPECÍFICAS DA IMAGEM:
-- O enunciado deve deixar claro que a resolução depende da observação da imagem apresentada.
-- A questão deve explorar identificação, interpretação, diagnóstico, análise técnica ou tomada de decisão com base na imagem.
-- Não diga que não consegue ver a imagem.
+REGRAS DA IMAGEM:
+- O enunciado deve depender da observação da imagem.
+- É permitido mencionar imagem apenas nesta questão.
+- Não invente outros recursos como tabela, relatório, gráfico ou laudo.
 """
     else:
         bloco_imagem = """
 REGRAS ESPECÍFICAS:
 - Esta questão NÃO possui imagem.
-- Portanto, é proibido mencionar figura, imagem, diagrama, esquema visual, gráfico ou qualquer recurso visual inexistente.
+- Portanto, é proibido mencionar figura, imagem, diagrama, esquema, gráfico visual ou elemento visual.
 """
 
     bloco_tipo = ""
@@ -287,21 +359,20 @@ A questão deve ser DISCURSIVA com:
 - exigência de resposta estruturada
 - sem alternativas
 - sem gabarito em letra
-- exigir análise técnica, justificativa, procedimento, critérios, sequência lógica, diagnóstico, segurança ou proposta de solução
 """
 
     return f"""
 Atue como especialista em elaboração de avaliações técnicas para educação profissional industrial.
 
 OBJETIVO:
-Gerar SOMENTE a Questão {questao_atual['numero']:02d}, com alto rigor técnico, redação profissional e nível difícil.
+Gerar SOMENTE a Questão {questao_atual['numero']:02d}, com alto rigor técnico, contextualização forte e nível difícil.
 
 DADOS DA AVALIAÇÃO:
 - Curso: {dados_usuario['curso']}
 - Unidade Curricular: {dados_usuario['unidade_curricular']}
 - Valor da avaliação: {dados_usuario['valor_avaliacao']}
 
-CONFIGURAÇÃO DA QUESTÃO ATUAL:
+CONFIGURAÇÃO DA QUESTÃO:
 - Número: {questao_atual['numero']}
 - Tipo: {questao_atual['tipo']}
 - Peso: {questao_atual['peso']}
@@ -312,34 +383,31 @@ CONFIGURAÇÃO DA QUESTÃO ATUAL:
 QUESTÕES JÁ GERADAS:
 {resumo_anteriores}
 
-INSTRUÇÕES CRÍTICAS:
-1. Baseie-se EXCLUSIVAMENTE no conteúdo-base fornecido.
-2. NÃO repita cenários, estruturas, comandos, redações, sintomas, contextos ou focos técnicos das questões já geradas.
-3. Esta nova questão deve ser substancialmente diferente das anteriores.
-4. Crie uma situação profissional plausível da área industrial.
-5. O enunciado deve ser tecnicamente denso, contextualizado e completo.
-6. Evite superficialidade.
-7. Não faça pergunta meramente conceitual ou definicional.
-8. Não invente tabela, relatório, gráfico, laudo, anexo, prontuário, planilha ou dados não fornecidos.
-9. Se não houver imagem, não mencione figura, imagem, diagrama, esquema visual ou elemento gráfico.
-10. Se houver imagem, o enunciado deve depender dela.
+REGRAS OBRIGATÓRIAS:
+1. Baseie-se EXCLUSIVAMENTE no conteúdo-base.
+2. Não repita cenário, estrutura, foco técnico ou redação das questões anteriores.
+3. Crie situação profissional plausível da área industrial.
+4. O enunciado deve ser completo, técnico e suficientemente detalhado.
+5. Não gerar perguntas superficiais ou apenas conceituais.
+6. É proibido usar no enunciado, salvo imagem realmente fornecida:
+   relatório, tabela, gráfico, laudo, planilha, prontuário, anexo, figura, imagem, diagrama.
+7. Se não houver imagem, não use nenhuma referência visual.
+8. Não invente material complementar inexistente.
+9. O texto deve ser autossuficiente.
+10. Escrever em português brasileiro formal e técnico.
 11. Não usar markdown.
 12. Não usar crases.
-13. Escrever em português brasileiro formal e técnico.
-14. Priorizar verbos cognitivos compatíveis com aplicar, analisar, avaliar ou criar.
-15. O enunciado deve, sempre que possível, envolver diagnóstico, manutenção, inspeção, proteção, ensaio, falha, operação, segurança, sequência lógica ou tomada de decisão.
-16. Não gere enunciado genérico.
-17. Não copie nem parafraseie a mesma questão anterior.
-18. O texto deve ser autossuficiente, sem remeter a material inexistente.
-19. Antes de responder, faça checagem interna para impedir repetição e referências indevidas.
+13. Priorizar aplicar, analisar, avaliar ou criar.
+14. Sempre que possível, exigir diagnóstico, procedimento, proteção, ensaio, inspeção, segurança, ajuste, análise de falha ou tomada de decisão.
+15. Antes de responder, faça checagem interna para impedir repetição e impedir qualquer menção a relatório, tabela, gráfico, laudo, figura ou anexo inexistente.
 
 {bloco_tipo}
 
-FEEDBACK DE REJEIÇÕES ANTERIORES:
+ERROS ANTERIORES A CORRIGIR:
 {feedback_erro if feedback_erro else "Nenhum."}
 
 FORMATO DE SAÍDA:
-Retorne SOMENTE JSON válido no seguinte formato:
+Retorne SOMENTE JSON válido:
 
 {{
   "questao": {{
@@ -348,11 +416,11 @@ Retorne SOMENTE JSON válido no seguinte formato:
     "peso": "{questao_atual['peso']}",
     "contexto": "texto completo da questão",
     "alternativas": {{
-      "A": "texto",
-      "B": "texto",
-      "C": "texto",
-      "D": "texto",
-      "E": "texto"
+          "A": "texto",
+          "B": "texto",
+          "C": "texto",
+          "D": "texto",
+          "E": "texto"
     }},
     "gabarito": "A",
     "bloom": "Analisar"
@@ -370,24 +438,17 @@ CONTEÚDO-BASE:
 # ==========================================
 # VALIDAÇÃO DAS QUESTÕES
 # ==========================================
-def validar_estrutura_questao_unica(
-    q: Dict[str, Any],
-    questao_config: Dict[str, Any]
-) -> Dict[str, Any]:
+def validar_estrutura_questao_unica(q: Dict[str, Any], questao_config: Dict[str, Any]) -> Dict[str, Any]:
     numero_esperado = questao_config["numero"]
     tipo_esperado = questao_config["tipo"]
 
     if q.get("numero") != numero_esperado:
-        raise ValueError(
-            f"Questão retornada com número incorreto. Esperado: {numero_esperado}, recebido: {q.get('numero')}"
-        )
+        raise ValueError(f"Questão retornada com número incorreto. Esperado: {numero_esperado}, recebido: {q.get('numero')}")
 
     if q.get("tipo") != tipo_esperado:
-        raise ValueError(
-            f"Questão {numero_esperado}: tipo incorreto. Esperado: {tipo_esperado}, recebido: {q.get('tipo')}"
-        )
+        raise ValueError(f"Questão {numero_esperado}: tipo incorreto. Esperado: {tipo_esperado}, recebido: {q.get('tipo')}")
 
-    contexto = normalizar_texto(q.get("contexto", ""))
+    contexto = sanitizar_contexto_gerado(q.get("contexto", ""), bool(questao_config.get("imagem_bytes")))
     if not contexto:
         raise ValueError(f"Questão {numero_esperado}: contexto vazio.")
 
@@ -423,44 +484,31 @@ def validar_estrutura_questao_unica(
 
     return q
 
-def validar_qualidade_questao_unica(
-    questao: Dict[str, Any],
-    questoes_anteriores: List[Dict[str, Any]]
-) -> None:
+def validar_qualidade_questao_unica(questao: Dict[str, Any], questoes_anteriores: List[Dict[str, Any]]) -> None:
     numero = questao["numero"]
     contexto = normalizar_texto(questao.get("contexto", ""))
     possui_imagem = bool(questao.get("imagem_bytes"))
 
     if len(contexto) < TAMANHO_MINIMO_CONTEXTO:
-        raise ValueError(
-            f"Questão {numero}: enunciado muito curto ou superficial."
-        )
+        raise ValueError(f"Questão {numero}: enunciado muito curto ou superficial.")
 
-    termo_proibido = contem_termos_proibidos_sem_suporte(contexto, possui_imagem)
-    if termo_proibido:
-        raise ValueError(
-            f"Questão {numero}: menciona recurso não fornecido ou inadequado: '{termo_proibido}'."
-        )
+    ref_indevida = detectar_referencia_indevida(contexto, possui_imagem)
+    if ref_indevida:
+        raise ValueError(f"Questão {numero}: referência indevida detectada: {ref_indevida}")
 
     if contem_generico_demais(contexto):
-        raise ValueError(
-            f"Questão {numero}: enunciado excessivamente genérico."
-        )
+        raise ValueError(f"Questão {numero}: enunciado excessivamente genérico.")
 
     if questao["tipo"] == "objetiva":
         for letra, alt in questao["alternativas"].items():
             if len(normalizar_texto(alt)) < 8:
-                raise ValueError(
-                    f"Questão {numero}: alternativa {letra} muito curta."
-                )
+                raise ValueError(f"Questão {numero}: alternativa {letra} muito curta.")
 
     for anterior in questoes_anteriores:
         contexto_ant = normalizar_texto(anterior.get("contexto", ""))
 
         if contexto.lower() == contexto_ant.lower():
-            raise ValueError(
-                f"Questão {numero}: repetição literal da questão {anterior['numero']}."
-            )
+            raise ValueError(f"Questão {numero}: repetição literal da questão {anterior['numero']}.")
 
         sim = similaridade_textual_simples(contexto, contexto_ant)
         if sim > SIMILARIDADE_MAXIMA_PERMITIDA:
@@ -528,33 +576,6 @@ def gerar_questao_unica_com_ia(
     raise ValueError(
         f"Falha ao gerar a questão {questao_config['numero']:02d} após múltiplas tentativas. Último erro: {ultimo_erro}"
     )
-
-def gerar_questoes_ia(conteudo_base: str, dados_usuario: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str, str]:
-    questoes_geradas = []
-    respostas_brutas = []
-
-    for questao_config in dados_usuario["questoes"]:
-        questao, resposta = gerar_questao_unica_com_ia(
-            conteudo_base=conteudo_base,
-            dados_usuario=dados_usuario,
-            questao_config=questao_config,
-            questoes_anteriores=questoes_geradas
-        )
-        questoes_geradas.append(questao)
-        respostas_brutas.append({
-            "numero": questao["numero"],
-            "resposta_bruta": resposta
-        })
-
-    questoes_geradas = validar_conjunto_final_questoes(questoes_geradas)
-
-    resposta_bruta_unificada = json.dumps(
-        {"respostas_brutas": respostas_brutas},
-        ensure_ascii=False,
-        indent=2
-    )
-
-    return questoes_geradas, resposta_bruta_unificada, MODELO_PRINCIPAL
 
 # ==========================================
 # WORD - APOIO
@@ -930,12 +951,3 @@ if submitted:
 
     except Exception as e:
         st.error(f"Ocorreu um erro durante a execução: {e}")
-  
-   
-
-    
-    
-
- 
-   
-
