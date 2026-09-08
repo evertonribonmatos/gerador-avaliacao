@@ -31,6 +31,19 @@ MAX_TENTATIVAS_POR_QUESTAO = 5
 TAMANHO_MINIMO_CONTEXTO = 180
 SIMILARIDADE_MAXIMA_PERMITIDA = 0.72
 
+MARCADORES_QUESTOES = {
+    1: "primeira",
+    2: "segunda",
+    3: "terceira",
+    4: "quarta",
+    5: "quinta",
+    6: "sexta",
+    7: "sétima",
+    8: "oitava",
+    9: "nona",
+    10: "décima",
+}
+
 CAMINHO_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 if os.path.exists(CAMINHO_TESSERACT):
     pytesseract.pytesseract.tesseract_cmd = CAMINHO_TESSERACT
@@ -66,6 +79,30 @@ def normalizar_texto(texto: Any) -> str:
     texto = re.sub(r"[ \t]+", " ", texto)
     texto = re.sub(r"\n{3,}", "\n\n", texto)
     return texto.strip()
+
+def remover_acentos(texto: str) -> str:
+    substituicoes = {
+        "á": "a", "à": "a", "ã": "a", "â": "a",
+        "é": "e", "ê": "e",
+        "í": "i",
+        "ó": "o", "ô": "o", "õ": "o",
+        "ú": "u",
+        "ç": "c",
+        "Á": "A", "À": "A", "Ã": "A", "Â": "A",
+        "É": "E", "Ê": "E",
+        "Í": "I",
+        "Ó": "O", "Ô": "O", "Õ": "O",
+        "Ú": "U",
+        "Ç": "C",
+    }
+    for origem, destino in substituicoes.items():
+        texto = texto.replace(origem, destino)
+    return texto
+
+def normalizar_texto_comparacao(texto: Any) -> str:
+    texto = normalizar_texto(texto).lower()
+    texto = remover_acentos(texto)
+    return texto
 
 def extrair_json_de_texto(texto: str) -> Dict[str, Any]:
     texto = texto.strip()
@@ -146,6 +183,7 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
         (r"\bem anexo\b", ""),
         (r"\bno anexo\b", ""),
         (r"\bprontuário\b", "registro técnico"),
+        (r"\bprontuario\b", "registro técnico"),
         (r"\bplanilha\b", "registro de dados"),
     ]
 
@@ -320,7 +358,6 @@ def montar_prompt_questao_unica(
     possui_imagem = "sim" if questao_atual.get("imagem_bytes") else "não"
     ocr = normalizar_texto(questao_atual.get("ocr_imagem", ""))
 
-    bloco_imagem = ""
     if questao_atual.get("imagem_bytes"):
         bloco_imagem = f"""
 IMAGEM ASSOCIADA À QUESTÃO:
@@ -340,7 +377,6 @@ REGRAS ESPECÍFICAS:
 - Portanto, é proibido mencionar figura, imagem, diagrama, esquema, gráfico visual ou elemento visual.
 """
 
-    bloco_tipo = ""
     if questao_atual["tipo"] == "objetiva":
         bloco_tipo = """
 A questão deve ser OBJETIVA com:
@@ -577,6 +613,33 @@ def gerar_questao_unica_com_ia(
         f"Falha ao gerar a questão {questao_config['numero']:02d} após múltiplas tentativas. Último erro: {ultimo_erro}"
     )
 
+def gerar_questoes_ia(conteudo_base: str, dados_usuario: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str, str]:
+    questoes_geradas = []
+    respostas_brutas = []
+
+    for questao_config in dados_usuario["questoes"]:
+        questao, resposta = gerar_questao_unica_com_ia(
+            conteudo_base=conteudo_base,
+            dados_usuario=dados_usuario,
+            questao_config=questao_config,
+            questoes_anteriores=questoes_geradas
+        )
+        questoes_geradas.append(questao)
+        respostas_brutas.append({
+            "numero": questao["numero"],
+            "resposta_bruta": resposta
+        })
+
+    questoes_geradas = validar_conjunto_final_questoes(questoes_geradas)
+
+    resposta_bruta_unificada = json.dumps(
+        {"respostas_brutas": respostas_brutas},
+        ensure_ascii=False,
+        indent=2
+    )
+
+    return questoes_geradas, resposta_bruta_unificada, MODELO_PRINCIPAL
+
 # ==========================================
 # WORD - APOIO
 # ==========================================
@@ -630,36 +693,39 @@ def preencher_campos_simples_em_tabelas(document: Document, dados_usuario: Dict[
     for table in document.tables:
         for row in table.rows:
             for idx, cell in enumerate(row.cells):
-                txt = normalizar_texto(texto_celula(cell)).lower()
-                if txt in mapa_labels:
-                    valor = mapa_labels[txt]
-                    if idx + 1 < len(row.cells):
-                        row.cells[idx + 1].text = valor
+                txt = normalizar_texto_comparacao(texto_celula(cell))
+                if txt in [normalizar_texto_comparacao(k) for k in mapa_labels.keys()]:
+                    for chave, valor in mapa_labels.items():
+                        if txt == normalizar_texto_comparacao(chave):
+                            if idx + 1 < len(row.cells):
+                                row.cells[idx + 1].text = valor
+                            break
 
 def encontrar_tabela_questoes(document: Document) -> Optional[Table]:
+    marcadores = [normalizar_texto_comparacao(v) for v in MARCADORES_QUESTOES.values()]
+
     for table in document.tables:
-        texto_total = " ".join(
-            normalizar_texto(texto_celula(cell)).lower()
-            for row in table.rows for cell in row.cells
-        )
+        textos_tabela = [
+            normalizar_texto_comparacao(texto_celula(cell))
+            for row in table.rows
+            for cell in row.cells
+        ]
+
+        texto_total = " ".join(textos_tabela)
 
         if (
-            ("questão" in texto_total or "questao" in texto_total)
-            and "peso" in texto_total
-            and "ponto obtido" in texto_total
+            ("questao" in texto_total)
+            and ("peso" in texto_total)
+            and ("ponto obtido" in texto_total)
+            and any(m in texto_total for m in marcadores)
         ):
             return table
+
     return None
 
 def formatar_texto_questao(questao: Dict[str, Any]) -> List[str]:
     linhas = []
-
-    bloom = normalizar_texto(questao.get("bloom", ""))
     contexto = normalizar_texto(questao.get("contexto", ""))
-
-    if bloom:
-        linhas.append(f"Nível cognitivo predominante: {bloom}.")
-        linhas.append("")
 
     if contexto:
         linhas.extend(contexto.split("\n"))
@@ -685,61 +751,55 @@ def preencher_tabela_questoes(document: Document, questoes: List[Dict[str, Any]]
         raise ValueError("Não foi possível localizar a tabela de questões no modelo Word.")
 
     mapa_questoes = {q["numero"]: q for q in questoes}
+    mapa_marcadores = {
+        numero: normalizar_texto_comparacao(marcador)
+        for numero, marcador in MARCADORES_QUESTOES.items()
+    }
 
-    i = 0
-    while i < len(tabela.rows):
-        row = tabela.rows[i]
+    for row in tabela.rows:
         textos = [normalizar_texto(texto_celula(c)) for c in row.cells]
-        textos_lower = [t.lower() for t in textos]
+        textos_norm = [normalizar_texto_comparacao(t) for t in textos]
 
-        if any(t in ["questão", "questao"] for t in textos_lower):
+        # Preencher peso na linha do cabeçalho
+        if "questao" in textos_norm and "peso" in textos_norm:
             numero_questao = None
 
-            for t in textos:
-                t_limpo = t.strip()
-                if t_limpo.isdigit():
-                    numero_questao = int(t_limpo)
+            for t in textos_norm:
+                if t.isdigit():
+                    numero_questao = int(t)
                     break
 
             if numero_questao in mapa_questoes:
                 q = mapa_questoes[numero_questao]
 
-                for idx_c, txt in enumerate(textos_lower):
+                for idx_c, txt in enumerate(textos_norm):
                     if txt == "peso" and idx_c + 1 < len(row.cells):
                         row.cells[idx_c + 1].text = str(q["peso"])
 
-                if i + 1 < len(tabela.rows):
-                    row_contexto = tabela.rows[i + 1]
-                    permitir_altura_automatica_linha(row_contexto)
+        # Preencher conteúdo na linha marcada como primeira, segunda, terceira...
+        for numero, marcador in mapa_marcadores.items():
+            if marcador in textos_norm:
+                if numero not in mapa_questoes:
+                    continue
 
-                    textos_contexto = [normalizar_texto(texto_celula(c)).lower() for c in row_contexto.cells]
+                q = mapa_questoes[numero]
+                permitir_altura_automatica_linha(row)
 
-                    idx_contexto = None
-                    for idx_c, txt in enumerate(textos_contexto):
-                        if txt == "contexto":
-                            idx_contexto = idx_c
-                            break
+                for c in row.cells:
+                    limpar_celula(c)
 
-                    if idx_contexto is not None:
-                        for c in row_contexto.cells[idx_contexto:]:
-                            limpar_celula(c)
-                        cell_destino = row_contexto.cells[idx_contexto].merge(row_contexto.cells[-1])
-                    else:
-                        for c in row_contexto.cells:
-                            limpar_celula(c)
-                        if len(row_contexto.cells) > 1:
-                            cell_destino = row_contexto.cells[0].merge(row_contexto.cells[-1])
-                        else:
-                            cell_destino = row_contexto.cells[0]
+                if len(row.cells) > 1:
+                    cell_destino = row.cells[0].merge(row.cells[-1])
+                else:
+                    cell_destino = row.cells[0]
 
-                    linhas_questao = formatar_texto_questao(q)
-                    escrever_linhas_e_imagem_na_celula(
-                        cell_destino,
-                        linhas_questao,
-                        imagem_bytes=q.get("imagem_bytes")
-                    )
-
-        i += 1
+                linhas_questao = formatar_texto_questao(q)
+                escrever_linhas_e_imagem_na_celula(
+                    cell_destino,
+                    linhas_questao,
+                    imagem_bytes=q.get("imagem_bytes")
+                )
+                break
 
 # ==========================================
 # GERAÇÃO DO DOCX FINAL
