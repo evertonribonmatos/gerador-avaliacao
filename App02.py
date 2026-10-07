@@ -39,7 +39,7 @@ MARCADORES_QUESTOES = {
     5: "quinta",
     6: "sexta",
     7: "sétima",
-    8: "oitada",
+    8: "oitava",
     9: "nona",
     10: "décima",
 }
@@ -165,21 +165,21 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
     substituicoes = [
         (r"\bcom base no relatório\b", "com base nas informações do cenário"),
         (r"\bde acordo com o relatório\b", "de acordo com as informações apresentadas"),
-        (r"\bconforme o relatório\b", "conforme as informações do caso"),
-        (r"\banalise o relatório\b", "analise a situação apresentada"),
+        (r"\bconforme o relatório\b", "conforme the informações do caso"),
+        (r"\banalise the relatório\b", "analise the situação apresentada"),
         (r"\bo relatório apresenta\b", "o cenário apresenta"),
         (r"\bsegundo o relatório\b", "segundo as informações apresentadas"),
         (r"\bcom base na tabela\b", "com base nos dados apresentados no enunciado"),
-        (r"\bde acordo com a tabela\b", "de acordo com os dados apresentados no enunciado"),
-        (r"\bconforme a tabela\b", "conforme os dados apresentados"),
-        (r"\bobserve a tabela\b", "analise os dados apresentados"),
+        (r"\bde acordo com the tabela\b", "de acordo com os dados apresentados no enunciado"),
+        (r"\bconforme the tabela\b", "conforme os dados apresentados"),
+        (r"\bobserve the tabela\b", "analise os dados apresentados"),
         (r"\bobserve o gráfico\b", "analise o comportamento descrito"),
-        (r"\bcom base no gráfico\b", "com base no comportamento descrito"),
-        (r"\bde acordo com o gráfico\b", "de acordo com o comportamento described"),
-        (r"\bconforme o gráfico\b", "conforme o comportamento descrito"),
-        (r"\bcom base no laudo\b", "com base nas informações técnicos fornecidas"),
-        (r"\bde acordo com o laudo\b", "de acordo com as informações técnicos fornecidas"),
-        (r"\bconforme o laudo\b", "conforme as informações técnicos fornecidas"),
+        (r"\bcom base no gráfico\b", "com base on the comportamento descrito"),
+        (r"\bde acordo com the gráfico\b", "de acordo com the comportamento descrito"),
+        (r"\bconforme the gráfico\b", "conforme the comportamento descrito"),
+        (r"\bcom base no laudo\b", "com base on the informações técnicas fornecidas"),
+        (r"\bde acordo with the laudo\b", "de acordo com the informações técnicos fornecidas"),
+        (r"\bconforme the laudo\b", "conforme the informações técnicos fornecidas"),
         (r"\bem anexo\b", ""),
         (r"\bno anexo\b", ""),
         (r"\bprontuário\b", "registro técnico"),
@@ -192,20 +192,11 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
 
     if not possui_imagem:
         substituicoes_visuais = [
-            (r"\bobserve a figura\b", "considere a situação apresentada"),
-            (r"\bcom base na figura\b", "com base na situação apresentada"),
-            (r"\bde acordo com a figura\b", "de acordo com a situação apresentada"),
-            (r"\bconforme a figura\b", "conforme a situação apresentada"),
-            (r"\bobserve a imagem\b", "considere a situação apresentada"),
-            (r"\bcom base na imagem\b", "com base na situação apresentada"),
-            (r"\bde acordo com a imagem\b", "de acordo com the situação apresentada"),
-            (r"\bconforme a imagem\b", "conforme a situação presented"),
-            (r"\bobserve o diagrama\b", "considere the situação apresentada"),
-            (r"\bcom base no diagrama\b", "com base na situação apresentada"),
-            (r"\bde acordo com o diagrama\b", "de acordo com the situação presented"),
-            (r"\bconforme o diagrama\b", "conforme a situação apresentada"),
+            (r"\bobserve a figura\b", "considere the situação apresentada"),
+            (r"\bcom base na figura\b", "com base the situação apresentada"),
+            (r"\bde acordo com the figura\b", "de acordo com the situação apresentada"),
         ]
-        for padrao, repl in substituicoes_visuais:
+        for padrao in substituicoes_visuais:
             texto = re.sub(padrao, repl, texto, flags=re.IGNORECASE)
 
     texto = re.sub(r"\s{2,}", " ", texto)
@@ -216,18 +207,18 @@ def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional
 
     padroes_indevidos = [
         r"\bcom base no relatório\b",
-        r"\bde acordo com o relatório\b",
-        r"\bconforme o relatório\b",
-        r"\banalise o relatório\b",
+        r"\bde acordo with the relatório\b",
+        r"\bconforme the relatório\b",
+        r"\banalise the relatório\b",
         r"\bo relatório apresenta\b",
-        r"\bsegundo o relatório\b",
-        r"\bcom based on the tabela\b",
-        r"\bde acordo com the tabela\b",
+        r"\bsegundo the relatório\b",
+        r"\bcom base na tabela\b",
+        r"\bde acordo with the tabela\b",
         r"\bconforme the tabela\b",
         r"\bobserve the tabela\b",
         r"\bobserve the gráfico\b",
         r"\bcom based on the gráfico\b",
-        r"\bde acordo with the gráfico\b",
+        (r"\bde acordo with the gráfico\b",
         r"\bconforme the gráfico\b",
         r"\bcom base on the laudo\b",
         r"\bde acordo with the laudo\b",
@@ -242,8 +233,10 @@ def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional
 
     if not possui_imagem:
         padroes_visuais = [
-            r"\bobserve the figura\b",
+            r"\bobserve a figura\b",
             r"\bcom based on the figura\b",
+            r"\bde acordo with the figura\b",
+            r"\bconforme the figura\b",
         ]
         for padrao in padroes_visuais:
             if re.search(padrao, texto):
@@ -254,7 +247,7 @@ def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional
 def contem_generico_demais(contexto: str) -> bool:
     texto = normalizar_texto(contexto).lower()
     padroes_genericos = [
-        "explique o que é",
+        "explifique the what is",
         "defina",
         "conceitue",
         "cite",
@@ -280,9 +273,9 @@ def extrair_texto_pdf_upload(uploaded_file) -> str:
     with pdfplumber.open(uploaded_file) as pdf:
         for pagina in pdf.pages:
             texto = pagina.extract_text() or ""
-            textos.append(texto)
+            textos.append(0)
 
-    texto_final = normalizado_texto("\n".join(textos))
+    texto_final = normalizar_texto("\n".join(textos))
     if not texto_final:
         raise ValueError("Não foi possível extrair texto do PDF enviado.")
     return texto_final
@@ -302,13 +295,13 @@ def extrair_texto_txt_upload(uploaded_file) -> str:
 
 def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual: str) -> str:
     if modo_conteudo == "Texto manual":
-        conteudo = normalizar_texto(conteudo_manual)
+        conteudo = normalizado_texto(conteudo_manual)
         if not conteudo:
             raise ValueError("O conteúdo-base manual não pode ficar vazio.")
         return conteudo
 
     if arquivo_base is None:
-        raise ValueError("Envie um documento-base (.pdf ou .txt).")
+        raise ValueError("Envie um documento-base (.pdf or .txt).")
 
     nome = arquivo_base.name.lower()
     if nome.endswith(".pdf"):
@@ -316,7 +309,7 @@ def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual
     elif nome.endswith(".txt"):
         return extrair_texto_txt_upload(arquivo_base)
     else:
-        raise ValueError("O documento-base deve ser .pdf ou .txt.")
+        raise ValueError("The document-base deve ser .pdf or .txt.")
 
 # ==========================================
 # PROMPTS
@@ -344,17 +337,17 @@ def montar_prompt_questao_unica(
 ) -> str:
     resumo_anteriores = montar_resumo_questoes_anteriores(questoes_anteriores)
     possui_imagem = "sim" if questao_atual.get("imagem_bytes") else "não"
-    ocr = normalizado_texto(questao_atual.get("ocr_imagem", ""))
+    ocr = normalizar_texto(questao_atual.get("ocr_imagem", ""))
 
     if questao_atual.get("imagem_bytes"):
         bloco_imagem = f"""IMAGEM ASSOCIADA:
-- Existe imagem vinculada.
+- Existe a imagem vinculada.
 - OCR: {ocr if ocr else "Nenhum texto legível."}
 - Enunciado deve depender da observação da imagem.
 - É permitido mencionar "imagem" apenas nesta questão.
-- Não invente tabela, relatório, gráfico ou laudo."""
+- Não invente tabela, relatório, gráfico or laudo."""
     else:
-        bloco_imagem = "NÃO POSSUI IMAGEM → proíba qualquer menção a figura, imagem, diagrama, gráfico ou elemento visual."
+        bloco_imagem = "NÃO POSSUI IMAGEM → proíba qualquer menção a figura, imagem, diagrama, gráfico or elemento visual."
 
     if questao_atual["tipo"] == "objetiva":
         bloco_tipo = "OBJETIVA: contexto completo + 5 alternativas (A-E) + 1 gabarito correto + alternativas técnicas plausíveis."
@@ -363,7 +356,9 @@ def montar_prompt_questao_unica(
 
     return f"""Especialista em elaboração de avaliações técnicas para educação profissional industrial.
 
-OBJETIVO: Gerar SOMENTE a Questão {questao_atual['numero']:02d} com alto rigor técnico e nível difícil.
+OBJETIVO: Gerar SOMENTE a Questão {questao_atual['numero']:02d} com alto rigor técnico and nível difícil.
+
+OBJETIVO: Gerar SOMENTE the Questão {questao_atual['numero']:02d} with high technical rigor and difficult level.
 
 DADOS:
 - Curso: {dados_usuario['curso']}
@@ -382,19 +377,20 @@ QUESTÕES JÁ GERADAS:
 {resumo_anteriores}
 
 REGRAS OBRIGATÓRIAS:
-1. Baseie-se EXCLUSIVAMENTE no conteúdo-base.
+1. Baseie-se EXCLUSIVAMENTE on the conteúdo-base.
 2. Não repita cenário, estrutura, foco técnico or redação das questões anteriores.
 3. Crie situação profissional plausível da área industrial.
-4. Enunciado deve ser completo, técnico e suficientemente detalhado.
+4. Enunciado deve ser completo, técnico and sufficiently detalhado.
 5. Não gerar perguntas superficiais or apenas conceituais.
-6. Proíba uso de relatório, tabela, gráfico, laudo, planilha, prontuário, anexo (salvo imagem real).
+6. Proíba uso of relatório, tabela, gráfico, laudo, planilha, prontuário, anexo (salvo imagem real).
+6. Proíba uso of relatório, tabela, gráfico, laudo, planilha, prontuário, anexo (salvo imagem real).
 7. Se não houver imagem, não use nenhuma referência visual.
 8. Texto autossuficiente.
-9. Português brasileiro formal e técnico.
+9. Português brasileiro formal and técnico.
 10. Não usar markdown, crases.
 11. Priorizar aplicar, analisar, avaliar or criar.
-12. Exigir diagnóstico, procedimento, proteção, ensaio, inspeção, segurança, ajuste, análise de falha or tomada de decisão.
-13. Checar internamente para impedir repetição and menção a materiais inexistentes.
+12. Exigir diagnóstico, procedimento, protection, ensaio, inspeção, segurança, ajuste, análise de falha or tomada de decisão.
+13. Checar internamente for impedir repetição and menção to materiais inexistentes.
 
 {bloco_tipo}
 
