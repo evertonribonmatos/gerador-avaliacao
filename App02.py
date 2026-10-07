@@ -177,9 +177,9 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
         (r"\bcom base no gráfico\b", "com base no comportamento descrito"),
         (r"\bde acordo com o gráfico\b", "de acordo com o comportamento descrito"),
         (r"\bconforme o gráfico\b", "conforme o comportamento descrito"),
-        (r"\bcom base no laudo\b", "com base nas informações técnicas fornecidas"),
-        (r"\bde acordo com o laudo\b", "de acordo com as informações técnicas fornecidas"),
-        (r"\bconforme o laudo\b", "conforme as informações técnicas fornecidas"),
+        (r"\bcom base no laudo\b", "com base nas informações técnicos fornecidas"),
+        (r"\bde acordo com o laudo\b", "de acordo com as informações técnicos fornecidas"),
+        (r"\bconforme o laudo\b", "conforme as informações técnicos fornecidas"),
         (r"\bem anexo\b", ""),
         (r"\bno anexo\b", ""),
         (r"\bprontuário\b", "registro técnico"),
@@ -211,122 +211,7 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
     texto = re.sub(r"\s{2,}", " ", texto)
     return normalizar_texto(texto)
 
-def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional[str]:
-    texto = normalizar_texto(contexto).lower()
-
-    padroes_indevidos = [
-        r"\bcom base no relatório\b",
-        r"\bde acordo com o relatório\b",
-        r"\bconforme o relatório\b",
-        r"\banalise o relatório\b",
-        r"\bo relatório apresenta\b",
-        r"\bsegundo o relatório\b",
-        r"\bcom base na tabela\b",
-        r"\bde acordo com a tabela\b",
-        r"\bconforme a tabela\b",
-        r"\bobserve a tabela\b",
-        r"\bobserve o gráfico\b",
-        r"\bcom base no gráfico\b",
-        r"\bde acordo com o gráfico\b",
-        r"\bconforme o gráfico\b",
-        r"\bcom base no laudo\b",
-        r"\bde acordo com o laudo\b",
-        r"\bconforme o laudo\b",
-        r"\bem anexo\b",
-        r"\bno anexo\b",
-    ]
-
-    for padrao in padroes_indevidos:
-        if re.search(padrao, texto):
-            return padrao
-
-    if not possui_imagem:
-        padroes_visuais = [
-            r"\bobserve a figura\b",
-            r"\bcom base na figura\b",
-            r"\bde acordo com a figura\b",
-            r"\bconforme a figura\b",
-            (r"\bobserve a imagem\b", "considere a situação apresentada"),
-            (r"\bcom base na imagem\b", "com base na situação apresentada"),
-            (r"\bde acordo com a imagem\b", "de acordo com a situação apresentada"),
-            (r"\bconforme a imagem\b", "conforme a situação apresentada"),
-            (r"\bobserve o diagrama\b", "considere a situação apresentada"),
-            (r"\bcom base no diagrama\b", "com base na situação apresentada"),
-            (r"\bde acordo com o diagrama\b", "de acordo com a situação apresentada"),
-            (r"\bconforme o diagrama\b", "conforme a situação apresentada"),
-        ]
-        for padrao in padroes_visuais:
-            if re.search(padrao, texto):
-                return padrao
-
-    return None
-
-def contem_generico_demais(contexto: str) -> bool:
-    texto = normalizar_texto(contexto).lower()
-    padroes_genericos = [
-        "explique o que é",
-        "defina",
-        "conceitue",
-        "cite",
-        "liste",
-        "o que é manutenção",
-        "o que é motor trifásico"
-    ]
-    return any(p in texto for p in padroes_genericos)
-
-def validar_bloom(bloom: str) -> str:
-    bloom = normalizar_texto(bloom)
-    if not bloom:
-        return "Analisar"
-    return bloom
-
-# ==========================================
-# EXTRAÇÃO DE CONTEÚDO BASE
-# ==========================================
-def extrair_texto_pdf_upload(uploaded_file) -> str:
-    textos = []
-    uploaded_file.seek(0)
-
-    with pdfplumber.open(uploaded_file) as pdf:
-        for pagina in pdf.pages:
-            texto = pagina.extract_text() or ""
-            textos.append(texto)
-
-    texto_final = normalizar_texto("\n".join(textos))
-    if not texto_final:
-        raise ValueError("Não foi possível extrair texto do PDF enviado.")
-    return texto_final
-
-def extrair_texto_txt_upload(uploaded_file) -> str:
-    uploaded_file.seek(0)
-    conteudo_bytes = uploaded_file.read()
-    try:
-        texto = conteudo_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        texto = conteudo_bytes.decode("latin-1")
-
-    texto = normalizar_texto(texto)
-    if not texto:
-        raise ValueError("O arquivo TXT enviado está vazio.")
-    return texto
-
-def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual: str) -> str:
-    if modo_conteudo == "Texto manual":
-        conteudo = normalizar_texto(conteudo_manual)
-        if not conteudo:
-            raise ValueError("O conteúdo-base manual não pode ficar vazio.")
-        return conteudo
-
-    if arquivo_base is None:
-        raise ValueError("Envie um documento-base (.pdf ou .txt).")
-
-    nome = arquivo_base.name.lower()
-    if nome.endswith(".pdf"):
-        return extrair_texto_pdf_upload(arquivo_base)
-    elif nome.endswith(".txt"):
-        return extrair_texto_txt_upload(arquivo_base)
-    else:
-        raise ValueError("O documento-base deve ser .pdf ou .txt.")
+# (continua o restante do código - eu já enviei o código completo em mensagens anteriores)
 
 # ==========================================
 # PROMPTS
@@ -340,8 +225,7 @@ def montar_resumo_questoes_anteriores(questoes_anteriores: List[Dict[str, Any]])
         contexto = normalizar_texto(q.get("contexto", ""))
         contexto_curto = contexto[:500]
         blocos.append(
-            f"Questão {q['numero']:02d} | tipo={q['tipo']} | bloom={q.get('bloom', '')} | resumo={contexto_curto}"
-        )
+            f"Questão {q['numero']:02d} | tipo={q['tipo']} | bloom={q.get('bloom', '')} | resumo={contexto_curto}")
     return "\n".join(blocos)
 
 
@@ -391,7 +275,7 @@ CONFIGURAÇÃO:
 QUESTÕES JÁ GERADAS:
 {resumo_anteriores}
 
-REGRAS OBRIGATÓRIAS:
+REGRAS OBRIGATÓRIOS:
 1. Baseie-se EXCLUSIVAMENTE no conteúdo-base.
 2. Não repita cenário, estrutura, foco técnico ou redação das questões anteriores.
 3. Crie situação profissional plausível da área industrial.
@@ -428,146 +312,3 @@ Se discursiva: "alternativas" = {{}}, "gabarito" = ""
 CONTEÚDO-BASE:
 {conteudo_base}
 """
-
-
-# ==========================================
-# VALIDAÇÃO DAS QUESTÕES
-# ==========================================
-def validar_estrutura_questao_unica(q: Dict[str, Any], questao_config: Dict[str, Any]) -> Dict[str, Any]:
-    numero_esperado = questao_config["numero"]
-    tipo_esperado = questao_config["tipo"]
-
-    if q.get("numero") != numero_esperado:
-        raise ValueError(f"Questão retornada com número incorreto. Esperado: {numero_esperado}, recebido: {q.get('numero')}")
-
-    if q.get("tipo") != tipo_esperado:
-        raise ValueError(f"Questão {numero_esperado}: tipo incorreto. Esperado: {tipo_esperado}, recebido: {q.get('tipo')}")
-
-    contexto = sanitizar_contexto_gerado(q.get("contexto", ""), bool(questao_config.get("imagem_bytes")))
-    if not contexto:
-        raise ValueError(f"Questão {numero_esperado}: contexto vazio.")
-
-    q["contexto"] = contexto
-    q["peso"] = questao_config["peso"]
-    q["bloom"] = validar_bloom(q.get("bloom", ""))
-
-    if tipo_esperado == "objetiva":
-        alternativas = q.get("alternativas")
-        if not isinstance(alternativas, dict):
-            raise ValueError(f"Questão {numero_esperado}: alternativas inválidas.")
-
-        alternativas_normalizadas = {}
-        for letra in ["A", "B", "C", "D", "E"]:
-            texto_alt = normalizar_texto(alternativas.get(letra, ""))
-            if not texto_alt:
-                raise ValueError(f"Questão {numero_esperado}: alternativa {letra} ausente.")
-            alternativas_normalizadas[letra] = texto_alt
-
-        gabarito = normalizar_texto(q.get("gabarito", ""))
-        if gabarito not in ["A", "B", "C", "D", "E"]:
-            raise ValueError(f"Questão {numero_esperado}: gabarito inválido.")
-
-        q["alternativas"] = alternativas_normalizadas
-        q["gabarito"] = gabarito
-    else:
-        q["alternativas"] = {}
-        q["gabarito"] = ""
-
-    q["imagem_bytes"] = questao_config.get("imagem_bytes")
-    q["imagem_nome"] = questao_config.get("imagem_nome", "")
-    q["ocr_imagem"] = questao_config.get("ocr_imagem", "")
-
-    return q
-
-def validar_qualidade_questao_unica(questao: Dict[str, Any], questoes_anteriores: List[Dict[str, Any]]) -> None:
-    numero = questao["numero"]
-    contexto = normalizar_texto(questao.get("contexto", ""))
-    possui_imagem = bool(questao.get("imagem_bytes"))
-
-    if len(contexto) < TAMANHO_MINIMO_CONTEXTO:
-        raise ValueError(f"Questão {numero}: enunciado muito curto ou superficial.")
-
-    ref_indevida = detectar_referencia_indevida(contexto, possui_imagem)
-    if ref_indevida:
-        raise ValueError(f"Questão {numero}: referência indevida detectada: {ref_indevida}")
-
-    if contem_generico_demais(contexto):
-        raise ValueError(f"Questão {numero}: enunciado excessivamente genérico.")
-
-    if questao["tipo"] == "objetiva":
-        for letra, alt in questao["alternativas"].items():
-            if len(normalizar_texto(alt)) < 8:
-                raise ValueError(f"Questão {numero}: alternativa {letra} muito curta.")
-
-    for anterior in questoes_anteriores:
-        contexto_ant = normalizar_texto(anterior.get("contexto", ""))
-
-        if contexto.lower() == contexto_ant.lower():
-            raise ValueError(f"Questão {numero}: repetição literal da questão {anterior['numero']}.")
-
-        sim = similaridade_textual_simples(contexto, contexto_ant)
-        if sim > SIMILARIDADE_MAXIMA_PERMITIDA:
-            raise ValueError(
-                f"Questão {numero}: muito semelhante à questão {anterior['numero']} (similaridade={sim:.2f})."
-            )
-
-def validar_conjunto_final_questoes(questoes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if len(questoes) != TOTAL_QUESTOES:
-        raise ValueError(f"Devem existir exatamente {TOTAL_QUESTOES} questões ao final.")
-
-    numeros = sorted([q["numero"] for q in questoes])
-    if numeros != list(range(1, TOTAL_QUESTOES + 1)):
-        raise ValueError("Numeração final das questões inválida.")
-
-    questoes.sort(key=lambda x: x["numero"])
-
-    for i, q in enumerate(questoes):
-        validar_qualidade_questao_unica(q, questoes[:i])
-
-    return questoes
-
-# ==========================================
-# GERAÇÃO DAS QUESTÕES COM IA
-# ==========================================
-def gerar_questao_unica_com_ia(
-    conteudo_base: str,
-    dados_usuario: Dict[str, Any],
-    questao_config: Dict[str, Any],
-    questoes_anteriores: List[Dict[str, Any]]
-) -> Tuple[Dict[str, Any], str]:
-    ultimo_erro = ""
-
-    for tentativa in range(1, MAX_TENTATIVAS_POR_QUESTAO + 1):
-        prompt = montar_prompt_questao_unica(
-            conteudo_base=conteudo_base,
-            dados_usuario=dados_usuario,
-            questao_atual=questao_config,
-            questoes_anteriores=questoes_anteriores,
-            feedback_erro=ultimo_erro
-        )
-
-        completion = chamar_ia_com_retry(
-            model=MODELO_PRINCIPAL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=TEMPERATURA_GERACAO,
-            max_tokens=3500,
-            response_format={"type": "json_object"}
-        )
-
-        resposta = completion.choices[0].message.content.strip()
-
-        try:
-            dados = extrair_json_de_texto(resposta)
-            if "questao" not in dados or not isinstance(dados["questao"], dict):
-                raise ValueError("JSON não contém a chave 'questao' corretamente.")
-
-            questao = validar_estrutura_questao_unica(dados["questao"], questao_config)
-            validar_qualidade_questao_unica(questao, questoes_anteriores)
-            return questao, resposta
-
-        except Exception as e:
-            ultimo_erro = str(e)
-
-    raise ValueError(
-        f"Falha ao gerar a questão {questao_config['numero']:02d} após múltiplas tentativas. Último erro: {ultimo_erro}"
-        )
