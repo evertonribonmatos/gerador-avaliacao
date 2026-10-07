@@ -39,7 +39,7 @@ MARCADORES_QUESTOES = {
     5: "quinta",
     6: "sexta",
     7: "sétima",
-    8: "oitava",
+    8: "oitada",
     9: "nona",
     10: "décima",
 }
@@ -175,7 +175,7 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
         (r"\bobserve a tabela\b", "analise os dados apresentados"),
         (r"\bobserve o gráfico\b", "analise o comportamento descrito"),
         (r"\bcom base no gráfico\b", "com base no comportamento descrito"),
-        (r"\bde acordo com o gráfico\b", "de acordo com o comportamento descrito"),
+        (r"\bde acordo com o gráfico\b", "de acordo com o comportamento described"),
         (r"\bconforme o gráfico\b", "conforme o comportamento descrito"),
         (r"\bcom base no laudo\b", "com base nas informações técnicos fornecidas"),
         (r"\bde acordo com o laudo\b", "de acordo com as informações técnicos fornecidas"),
@@ -198,11 +198,11 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
             (r"\bconforme a figura\b", "conforme a situação apresentada"),
             (r"\bobserve a imagem\b", "considere a situação apresentada"),
             (r"\bcom base na imagem\b", "com base na situação apresentada"),
-            (r"\bde acordo com a imagem\b", "de acordo com a situação apresentada"),
-            (r"\bconforme a imagem\b", "conforme a situação apresentada"),
-            (r"\bobserve o diagrama\b", "considere a situação apresentada"),
+            (r"\bde acordo com a imagem\b", "de acordo com the situação apresentada"),
+            (r"\bconforme a imagem\b", "conforme a situação presented"),
+            (r"\bobserve o diagrama\b", "considere the situação apresentada"),
             (r"\bcom base no diagrama\b", "com base na situação apresentada"),
-            (r"\bde acordo com o diagrama\b", "de acordo com a situação apresentada"),
+            (r"\bde acordo com o diagrama\b", "de acordo com the situação presented"),
             (r"\bconforme o diagrama\b", "conforme a situação apresentada"),
         ]
         for padrao, repl in substituicoes_visuais:
@@ -211,7 +211,112 @@ def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
     texto = re.sub(r"\s{2,}", " ", texto)
     return normalizar_texto(texto)
 
-# (continua o restante do código - eu já enviei o código completo em mensagens anteriores)
+def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional[str]:
+    texto = normalizar_texto(contexto).lower()
+
+    padroes_indevidos = [
+        r"\bcom base no relatório\b",
+        r"\bde acordo com o relatório\b",
+        r"\bconforme o relatório\b",
+        r"\banalise o relatório\b",
+        r"\bo relatório apresenta\b",
+        r"\bsegundo o relatório\b",
+        r"\bcom based on the tabela\b",
+        r"\bde acordo com the tabela\b",
+        r"\bconforme the tabela\b",
+        r"\bobserve the tabela\b",
+        r"\bobserve the gráfico\b",
+        r"\bcom based on the gráfico\b",
+        r"\bde acordo with the gráfico\b",
+        r"\bconforme the gráfico\b",
+        r"\bcom base on the laudo\b",
+        r"\bde acordo with the laudo\b",
+        r"\bconforme the laudo\b",
+        r"\bem anexo\b",
+        r"\bno anexo\b",
+    ]
+
+    for padrao in padroes_indevidos:
+        if re.search(padrao, texto):
+            return padrao
+
+    if not possui_imagem:
+        padroes_visuais = [
+            r"\bobserve the figura\b",
+            r"\bcom based on the figura\b",
+        ]
+        for padrao in padroes_visuais:
+            if re.search(padrao, texto):
+                return padrao
+
+    return None
+
+def contem_generico_demais(contexto: str) -> bool:
+    texto = normalizar_texto(contexto).lower()
+    padroes_genericos = [
+        "explique o que é",
+        "defina",
+        "conceitue",
+        "cite",
+        "liste",
+        "o que é manutenção",
+        "o que é motor trifásico"
+    ]
+    return any(p in texto for p in padroes_genericos)
+
+def validar_bloom(bloom: str) -> str:
+    bloom = normalizar_texto(bloom)
+    if not bloom:
+        return "Analisar"
+    return bloom
+
+# ==========================================
+# EXTRAÇÃO de CONTEÚDO BASE
+# ==========================================
+def extrair_texto_pdf_upload(uploaded_file) -> str:
+    textos = []
+    uploaded_file.seek(0)
+
+    with pdfplumber.open(uploaded_file) as pdf:
+        for pagina in pdf.pages:
+            texto = pagina.extract_text() or ""
+            textos.append(texto)
+
+    texto_final = normalizado_texto("\n".join(textos))
+    if not texto_final:
+        raise ValueError("Não foi possível extrair texto do PDF enviado.")
+    return texto_final
+
+def extrair_texto_txt_upload(uploaded_file) -> str:
+    uploaded_file.seek(0)
+    conteudo_bytes = uploaded_file.read()
+    try:
+        texto = conteudo_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        texto = conteudo_bytes.decode("latin-1")
+
+    texto = normalizar_texto(texto)
+    if not texto:
+        raise ValueError("O arquivo TXT enviado está vazio.")
+    return texto
+
+def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual: str) -> str:
+    if modo_conteudo == "Texto manual":
+        conteudo = normalizar_texto(conteudo_manual)
+        if not conteudo:
+            raise ValueError("O conteúdo-base manual não pode ficar vazio.")
+        return conteudo
+
+    if arquivo_base is None:
+        raise ValueError("Envie um documento-base (.pdf ou .txt).")
+
+    nome = arquivo_base.name.lower()
+    if nome.endswith(".pdf"):
+        return extrair_texto_pdf_upload(arquivo_base)
+    elif nome.endswith(".txt"):
+        return extrair_texto_txt_upload(arquivo_base)
+    else:
+        raise ValueError("O documento-base deve ser .pdf ou .txt.")
 
 # ==========================================
 # PROMPTS
@@ -225,7 +330,8 @@ def montar_resumo_questoes_anteriores(questoes_anteriores: List[Dict[str, Any]])
         contexto = normalizar_texto(q.get("contexto", ""))
         contexto_curto = contexto[:500]
         blocos.append(
-            f"Questão {q['numero']:02d} | tipo={q['tipo']} | bloom={q.get('bloom', '')} | resumo={contexto_curto}")
+            f"Questão {q['numero']:02d} | tipo={q['tipo']} | bloom={q.get('bloom', '')} | resumo={contexto_curto}"
+        )
     return "\n".join(blocos)
 
 
@@ -238,7 +344,7 @@ def montar_prompt_questao_unica(
 ) -> str:
     resumo_anteriores = montar_resumo_questoes_anteriores(questoes_anteriores)
     possui_imagem = "sim" if questao_atual.get("imagem_bytes") else "não"
-    ocr = normalizar_texto(questao_atual.get("ocr_imagem", ""))
+    ocr = normalizado_texto(questao_atual.get("ocr_imagem", ""))
 
     if questao_atual.get("imagem_bytes"):
         bloco_imagem = f"""IMAGEM ASSOCIADA:
@@ -275,20 +381,20 @@ CONFIGURAÇÃO:
 QUESTÕES JÁ GERADAS:
 {resumo_anteriores}
 
-REGRAS OBRIGATÓRIOS:
+REGRAS OBRIGATÓRIAS:
 1. Baseie-se EXCLUSIVAMENTE no conteúdo-base.
-2. Não repita cenário, estrutura, foco técnico ou redação das questões anteriores.
+2. Não repita cenário, estrutura, foco técnico or redação das questões anteriores.
 3. Crie situação profissional plausível da área industrial.
 4. Enunciado deve ser completo, técnico e suficientemente detalhado.
-5. Não gerar perguntas superficiais ou apenas conceituais.
+5. Não gerar perguntas superficiais or apenas conceituais.
 6. Proíba uso de relatório, tabela, gráfico, laudo, planilha, prontuário, anexo (salvo imagem real).
 7. Se não houver imagem, não use nenhuma referência visual.
 8. Texto autossuficiente.
 9. Português brasileiro formal e técnico.
 10. Não usar markdown, crases.
-11. Priorizar aplicar, analisar, avaliar ou criar.
-12. Exigir diagnóstico, procedimento, proteção, ensaio, inspeção, segurança, ajuste, análise de falha ou tomada de decisão.
-13. Checar internamente para impedir repetição e menção a materiais inexistentes.
+11. Priorizar aplicar, analisar, avaliar or criar.
+12. Exigir diagnóstico, procedimento, proteção, ensaio, inspeção, segurança, ajuste, análise de falha or tomada de decisão.
+13. Checar internamente para impedir repetição and menção a materiais inexistentes.
 
 {bloco_tipo}
 
@@ -307,7 +413,7 @@ FORMATO DE SAÍDA (JSON somente):
   }}
 }}
 
-Se discursiva: "alternativas" = {{}}, "gabarito" = ""
+If discursiva: "alternativas" = {{}}, "gabarito" = ""
 
 CONTEÚDO-BASE:
 {conteudo_base}
