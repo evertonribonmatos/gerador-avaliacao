@@ -334,7 +334,89 @@ def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual
 # ==========================================
 # PROMPTS
 # ==========================================
-montar_prompt_questao_unica
+def montar_prompt_questao_unica(
+    conteudo_base: str,
+    dados_usuario: Dict[str, Any],
+    questao_atual: Dict[str, Any],
+    questoes_anteriores: List[Dict[str, Any]],
+    feedback_erro: str = ""
+) -> str:
+    resumo_anteriores = montar_resumo_questoes_anteriores(questoes_anteriores)
+    possui_imagem = "sim" if questao_atual.get("imagem_bytes") else "não"
+    ocr = normalizar_texto(questao_atual.get("ocr_imagem", ""))
+
+    if questao_atual.get("imagem_bytes"):
+        bloco_imagem = f"""IMAGEM ASSOCIADA:
+- Existe imagem vinculada.
+- OCR: {ocr if ocr else "Nenhum texto legível."}
+- Enunciado deve depender da observação da imagem.
+- É permitido mencionar "imagem" apenas nesta questão.
+- Não invente tabela, relatório, gráfico ou laudo."""
+    else:
+        bloco_imagem = "NÃO POSSUI IMAGEM → proíba qualquer menção a figura, imagem, diagrama, gráfico ou elemento visual."
+
+    if questao_atual["tipo"] == "objetiva":
+        bloco_tipo = "OBJETIVA: contexto completo + 5 alternativas (A-E) + 1 gabarito correto + alternativas técnicas plausíveis."
+    else:
+        bloco_tipo = "DISCURSIVA: contexto completo + comando discursivo robusto + exigência de resposta estruturada."
+
+    return f"""Especialista em elaboração de avaliações técnicas para educação profissional industrial.
+
+OBJETIVO: Gerar SOMENTE a Questão {questao_atual['numero']:02d} com alto rigor técnico e nível difícil.
+
+DADOS:
+- Curso: {dados_usuario['curso']}
+- Unidade Curricular: {dados_usuario['unidade_curricular']}
+- Valor: {dados_usuario['valor_avaliacao']}
+
+CONFIGURAÇÃO:
+- Número: {questao_atual['numero']}
+- Tipo: {questao_atual['tipo']}
+- Peso: {questao_atual['peso']}
+- Imagem: {possui_imagem}
+
+{bloco_imagem}
+
+QUESTÕES JÁ GERADAS:
+{resumo_anteriores}
+
+REGRAS OBRIGATÓRIAS:
+1. Baseie-se EXCLUSIVAMENTE no conteúdo-base.
+2. Não repita cenário, estrutura, foco técnico ou redação das questões anteriores.
+3. Crie situação profissional plausível da área industrial.
+4. Enunciado deve ser completo, técnico e suficientemente detalhado.
+5. Não gerar perguntas superficiais ou apenas conceituais.
+6. Proíba uso de relatório, tabela, gráfico, laudo, planilha, prontuário, anexo (salvo imagem real).
+7. Se não houver imagem, não use nenhuma referência visual.
+8. Texto autossuficiente.
+9. Português brasileiro formal e técnico.
+10. Não usar markdown, crases.
+11. Priorizar aplicar, analisar, avaliar ou criar.
+12. Exigir diagnóstico, procedimento, proteção, ensaio, inspeção, segurança, ajuste, análise de falha ou tomada de decisão.
+13. Checar internamente para impedir repetição e menção a materiais inexistentes.
+
+{bloco_tipo}
+
+ERROS ANTERIORES: {feedback_erro if feedback_erro else "Nenhum."}
+
+FORMATO DE SAÍDA (JSON somente):
+{{
+  "questao": {{
+    "numero": {questao_atual['numero']},
+    "tipo": "{questao_atual['tipo']}",
+    "peso": "{questao_atual['peso']}",
+    "contexto": "texto completo",
+    "alternativas": {{"A":"", "B":"", "C":"", "D":"", "E":""}},
+    "gabarito": "A",
+    "bloom": "Analisar"
+  }}
+}}
+
+Se discursiva: "alternativas" = {{}}, "gabarito" = ""
+
+CONTEÚDO-BASE:
+{conteudo_base}
+"""
 # ==========================================
 # VALIDAÇÃO DAS QUESTÕES
 # ==========================================
