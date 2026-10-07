@@ -246,17 +246,14 @@ def detectar_referencia_indevida(contexto: str, possui_imagem: bool) -> Optional
             r"\bcom base na figura\b",
             r"\bde acordo com a figura\b",
             r"\bconforme a figura\b",
-            r"\bobserve a imagem\b",
-            r"\bcom base na imagem\b",
-            r"\bde acordo com a imagem\b",
-            r"\bconforme a imagem\b",
-            r"\bobserve o diagrama\b",
-            r"\bcom base no diagrama\b",
-            r"\bde acordo com o diagrama\b",
-            r"\bconforme o diagrama\b",
-            r"\bfigura abaixo\b",
-            r"\bimagem abaixo\b",
-            r"\bdiagrama abaixo\b",
+            (r"\bobserve a imagem\b", "considere a situação apresentada"),
+            (r"\bcom base na imagem\b", "com base na situação apresentada"),
+            (r"\bde acordo com a imagem\b", "de acordo com a situação apresentada"),
+            (r"\bconforme a imagem\b", "conforme a situação apresentada"),
+            (r"\bobserve o diagrama\b", "considere a situação apresentada"),
+            (r"\bcom base no diagrama\b", "com base na situação apresentada"),
+            (r"\bde acordo com o diagrama\b", "de acordo com a situação apresentada"),
+            (r"\bconforme o diagrama\b", "conforme a situação apresentada"),
         ]
         for padrao in padroes_visuais:
             if re.search(padrao, texto):
@@ -334,6 +331,20 @@ def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual
 # ==========================================
 # PROMPTS
 # ==========================================
+def montar_resumo_questoes_anteriores(questoes_anteriores: List[Dict[str, Any]]) -> str:
+    if not questoes_anteriores:
+        return "Nenhuma questão anterior."
+
+    blocos = []
+    for q in questoes_anteriores:
+        contexto = normalizar_texto(q.get("contexto", ""))
+        contexto_curto = contexto[:500]
+        blocos.append(
+            f"Questão {q['numero']:02d} | tipo={q['tipo']} | bloom={q.get('bloom', '')} | resumo={contexto_curto}"
+        )
+    return "\n".join(blocos)
+
+
 def montar_prompt_questao_unica(
     conteudo_base: str,
     dados_usuario: Dict[str, Any],
@@ -417,6 +428,8 @@ Se discursiva: "alternativas" = {{}}, "gabarito" = ""
 CONTEÚDO-BASE:
 {conteudo_base}
 """
+
+
 # ==========================================
 # VALIDAÇÃO DAS QUESTÕES
 # ==========================================
@@ -557,403 +570,4 @@ def gerar_questao_unica_com_ia(
 
     raise ValueError(
         f"Falha ao gerar a questão {questao_config['numero']:02d} após múltiplas tentativas. Último erro: {ultimo_erro}"
-    )
-
-def gerar_questoes_ia(conteudo_base: str, dados_usuario: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str, str]:
-    questoes_geradas = []
-    respostas_brutas = []
-
-    for questao_config in dados_usuario["questoes"]:
-        questao, resposta = gerar_questao_unica_com_ia(
-            conteudo_base=conteudo_base,
-            dados_usuario=dados_usuario,
-            questao_config=questao_config,
-            questoes_anteriores=questoes_geradas
         )
-        questoes_geradas.append(questao)
-        respostas_brutas.append({
-            "numero": questao["numero"],
-            "resposta_bruta": resposta
-        })
-
-    questoes_geradas = validar_conjunto_final_questoes(questoes_geradas)
-
-    resposta_bruta_unificada = json.dumps(
-        {"respostas_brutas": respostas_brutas},
-        ensure_ascii=False,
-        indent=2
-    )
-
-    return questoes_geradas, resposta_bruta_unificada, MODELO_PRINCIPAL
-
-# ==========================================
-# WORD - APOIO
-# ==========================================
-def texto_celula(cell: _Cell) -> str:
-    return "\n".join(p.text for p in cell.paragraphs).strip()
-
-def limpar_celula(cell: _Cell) -> None:
-    cell.text = ""
-    if not cell.paragraphs:
-        cell.add_paragraph()
-
-def escrever_linhas_e_imagem_na_celula(cell: _Cell, linhas: List[str], imagem_bytes: Optional[bytes] = None) -> None:
-    limpar_celula(cell)
-
-    if not linhas and not imagem_bytes:
-        return
-
-    primeira_linha_escrita = False
-
-    for linha in linhas:
-        if not primeira_linha_escrita:
-            cell.paragraphs[0].text = linha
-            primeira_linha_escrita = True
-        else:
-            p = cell.add_paragraph()
-            p.text = linha
-
-    if imagem_bytes:
-        if primeira_linha_escrita:
-            cell.add_paragraph("")
-        else:
-            cell.paragraphs[0].text = ""
-
-        p_img = cell.add_paragraph()
-        run = p_img.add_run()
-        run.add_picture(BytesIO(imagem_bytes), width=Inches(LARGURA_IMAGEM_POLEGADAS))
-
-def preencher_campos_simples_em_tabelas(document: Document, dados_usuario: Dict[str, Any]) -> None:
-    mapa_labels = {
-        "curso:": dados_usuario["curso"],
-        "unidade curricular:": dados_usuario["unidade_curricular"],
-        "turma:": dados_usuario["turma"],
-        "aluno:": dados_usuario["aluno"],
-        "matrícula:": dados_usuario["matricula"],
-        "matricula:": dados_usuario["matricula"],
-        "valor da avaliação:": dados_usuario["valor_avaliacao"],
-        "valor da avaliacao:": dados_usuario["valor_avaliacao"],
-        "data:": dados_usuario["data"],
-    }
-
-    for table in document.tables:
-        for row in table.rows:
-            for idx, cell in enumerate(row.cells):
-                txt = normalizar_texto_comparacao(texto_celula(cell))
-                if txt in [normalizar_texto_comparacao(k) for k in mapa_labels.keys()]:
-                    for chave, valor in mapa_labels.items():
-                        if txt == normalizar_texto_comparacao(chave):
-                            if idx + 1 < len(row.cells):
-                                row.cells[idx + 1].text = valor
-                            break
-
-def encontrar_tabela_questoes(document: Document) -> Optional[Table]:
-    marcadores = [normalizar_texto_comparacao(v) for v in MARCADORES_QUESTOES.values()]
-
-    for table in document.tables:
-        textos_tabela = [
-            normalizar_texto_comparacao(texto_celula(cell))
-            for row in table.rows
-            for cell in row.cells
-        ]
-
-        texto_total = " ".join(textos_tabela)
-
-        if (
-            ("questao" in texto_total)
-            and ("peso" in texto_total)
-            and ("ponto obtido" in texto_total)
-            and any(m in texto_total for m in marcadores)
-        ):
-            return table
-
-    return None
-
-def formatar_texto_questao(questao: Dict[str, Any]) -> List[str]:
-    linhas = []
-    contexto = normalizar_texto(questao.get("contexto", ""))
-
-    if contexto:
-        linhas.extend(contexto.split("\n"))
-
-    if questao["tipo"] == "objetiva":
-        linhas.append("")
-        for letra in ["A", "B", "C", "D", "E"]:
-            alt = normalizar_texto(questao["alternativas"].get(letra, ""))
-            linhas.append(f"({letra}) {alt}")
-
-    return linhas
-
-def permitir_altura_automatica_linha(row) -> None:
-    tr = row._tr
-    trPr = tr.get_or_add_trPr()
-
-    for child in trPr.findall(qn("w:trHeight")):
-        trPr.remove(child)
-
-def preencher_tabela_questoes(document: Document, questoes: List[Dict[str, Any]]) -> None:
-    tabela = encontrar_tabela_questoes(document)
-    if not tabela:
-        raise ValueError("Não foi possível localizar a tabela de questões no modelo Word.")
-
-    mapa_questoes = {q["numero"]: q for q in questoes}
-    mapa_marcadores = {
-        numero: normalizar_texto_comparacao(marcador)
-        for numero, marcador in MARCADORES_QUESTOES.items()
-    }
-
-    for row in tabela.rows:
-        textos = [normalizar_texto(texto_celula(c)) for c in row.cells]
-        textos_norm = [normalizar_texto_comparacao(t) for t in textos]
-
-        # Preencher peso na linha do cabeçalho
-        if "questao" in textos_norm and "peso" in textos_norm:
-            numero_questao = None
-
-            for t in textos_norm:
-                if t.isdigit():
-                    numero_questao = int(t)
-                    break
-
-            if numero_questao in mapa_questoes:
-                q = mapa_questoes[numero_questao]
-
-                for idx_c, txt in enumerate(textos_norm):
-                    if txt == "peso" and idx_c + 1 < len(row.cells):
-                        row.cells[idx_c + 1].text = str(q["peso"])
-
-        # Preencher conteúdo na linha marcada como primeira, segunda, terceira...
-        for numero, marcador in mapa_marcadores.items():
-            if marcador in textos_norm:
-                if numero not in mapa_questoes:
-                    continue
-
-                q = mapa_questoes[numero]
-                permitir_altura_automatica_linha(row)
-
-                for c in row.cells:
-                    limpar_celula(c)
-
-                if len(row.cells) > 1:
-                    cell_destino = row.cells[0].merge(row.cells[-1])
-                else:
-                    cell_destino = row.cells[0]
-
-                linhas_questao = formatar_texto_questao(q)
-                escrever_linhas_e_imagem_na_celula(
-                    cell_destino,
-                    linhas_questao,
-                    imagem_bytes=q.get("imagem_bytes")
-                )
-                break
-
-# ==========================================
-# GERAÇÃO DO DOCX FINAL
-# ==========================================
-def preencher_documento_word_em_memoria(
-    modelo_docx_bytes: bytes,
-    dados_usuario: Dict[str, Any],
-    questoes: List[Dict[str, Any]]
-) -> bytes:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_in:
-        tmp_in.write(modelo_docx_bytes)
-        caminho_entrada = tmp_in.name
-
-    try:
-        document = Document(caminho_entrada)
-        preencher_campos_simples_em_tabelas(document, dados_usuario)
-        preencher_tabela_questoes(document, questoes)
-
-        output = BytesIO()
-        document.save(output)
-        output.seek(0)
-        return output.getvalue()
-    finally:
-        if os.path.exists(caminho_entrada):
-            os.remove(caminho_entrada)
-
-# ==========================================
-# STREAMLIT UI
-# ==========================================
-st.set_page_config(page_title="Gerador de Avaliação Técnica", layout="wide")
-st.title("Gerador de Avaliação Técnica")
-st.write("Preencha os dados abaixo para gerar a avaliação e baixar o arquivo Word preenchido.")
-
-with st.form("form_avaliacao"):
-    st.subheader("Dados gerais")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        curso = st.text_input("Curso")
-        unidade_curricular = st.text_input("Unidade Curricular")
-        turma = st.text_input("Turma")
-        aluno = st.text_input("Aluno")
-    with col2:
-        matricula = st.text_input("Matrícula")
-        data = st.text_input("Data")
-        valor_avaliacao = st.text_input("Valor da avaliação")
-
-    modelo_docx = st.file_uploader("Modelo Word (.docx)", type=["docx"])
-
-    st.subheader("Conteúdo-base")
-    modo_conteudo = st.radio(
-        "Forma de informar o conteúdo-base",
-        ["Upload de arquivo (.pdf/.txt)", "Texto manual"]
-    )
-
-    arquivo_base = None
-    conteudo_base_manual = ""
-
-    if modo_conteudo == "Upload de arquivo (.pdf/.txt)":
-        arquivo_base = st.file_uploader("Documento-base (.pdf ou .txt)", type=["pdf", "txt"])
-    else:
-        conteudo_base_manual = st.text_area(
-            "Digite o conteúdo-base",
-            height=250,
-            placeholder="Cole aqui o conteúdo-base..."
-        )
-
-    st.subheader("Configuração das 10 questões")
-    questoes_config = []
-
-    for i in range(1, TOTAL_QUESTOES + 1):
-        st.markdown(f"**Questão {i:02d}**")
-        c1, c2 = st.columns(2)
-
-        with c1:
-            tipo = st.selectbox(
-                f"Tipo da Questão {i:02d}",
-                options=["objetiva", "discursiva"],
-                key=f"tipo_{i}"
-            )
-
-        with c2:
-            peso = st.text_input(
-                f"Peso da Questão {i:02d}",
-                value="1,0",
-                key=f"peso_{i}"
-            )
-
-        imagem_questao = st.file_uploader(
-            f"Imagem da Questão {i:02d} (opcional)",
-            type=["png", "jpg", "jpeg"],
-            key=f"imagem_{i}"
-        )
-
-        imagem_bytes = uploaded_file_para_bytes(imagem_questao)
-        ocr_imagem = tentar_ocr_em_imagem(imagem_bytes)
-
-        questoes_config.append({
-            "numero": i,
-            "tipo": tipo,
-            "peso": peso,
-            "imagem_bytes": imagem_bytes,
-            "imagem_nome": imagem_questao.name if imagem_questao else "",
-            "ocr_imagem": ocr_imagem
-        })
-
-    submitted = st.form_submit_button("Gerar avaliação")
-
-if submitted:
-    try:
-        if modelo_docx is None:
-            st.error("Envie o modelo Word (.docx).")
-            st.stop()
-
-        dados_usuario = {
-            "curso": curso,
-            "unidade_curricular": unidade_curricular,
-            "turma": turma,
-            "aluno": aluno,
-            "matricula": matricula,
-            "data": data,
-            "valor_avaliacao": valor_avaliacao,
-            "questoes": questoes_config
-        }
-
-        with st.spinner("Extraindo conteúdo-base..."):
-            conteudo_base = obter_conteudo_base_upload(
-                modo_conteudo=modo_conteudo,
-                arquivo_base=arquivo_base,
-                conteudo_manual=conteudo_base_manual
-            )
-
-        progresso = st.progress(0)
-        status = st.empty()
-
-        questoes_geradas = []
-        respostas_brutas = []
-
-        for idx, questao_config in enumerate(dados_usuario["questoes"], start=1):
-            status.info(f"Gerando questão {idx:02d} de {TOTAL_QUESTOES}...")
-            questao, resposta = gerar_questao_unica_com_ia(
-                conteudo_base=conteudo_base,
-                dados_usuario=dados_usuario,
-                questao_config=questao_config,
-                questoes_anteriores=questoes_geradas
-            )
-            questoes_geradas.append(questao)
-            respostas_brutas.append({
-                "numero": idx,
-                "resposta_bruta": resposta
-            })
-            progresso.progress(idx / TOTAL_QUESTOES)
-
-        status.info("Validando conjunto final das questões...")
-        questoes = validar_conjunto_final_questoes(questoes_geradas)
-
-        resposta_bruta_unificada = json.dumps(
-            {"respostas_brutas": respostas_brutas},
-            ensure_ascii=False,
-            indent=2
-        )
-
-        with st.spinner("Preenchendo documento Word..."):
-            docx_final_bytes = preencher_documento_word_em_memoria(
-                modelo_docx_bytes=modelo_docx.getvalue(),
-                dados_usuario=dados_usuario,
-                questoes=questoes
-            )
-
-        status.empty()
-        progresso.empty()
-
-        st.success("Avaliação gerada com sucesso!")
-        st.info(f"Modelo usado: {MODELO_PRINCIPAL}")
-
-        with st.expander("Resposta bruta da IA"):
-            st.text(resposta_bruta_unificada)
-
-        with st.expander("Visualizar JSON gerado pela IA"):
-            st.json({"questoes": questoes})
-
-        with st.expander("Debug das questões geradas"):
-            for q in questoes:
-                st.write(
-                    f"Questão {q['numero']} | tipo: {q['tipo']} | peso: {q['peso']} | "
-                    f"imagem: {'sim' if q.get('imagem_bytes') else 'não'} | bloom: {q.get('bloom', '')}"
-                )
-
-                if q.get("ocr_imagem"):
-                    st.write(f"OCR da imagem: {q['ocr_imagem'][:300]}")
-
-                st.write("Contexto:")
-                st.write(q["contexto"][:1200] + "..." if len(q["contexto"]) > 1200 else q["contexto"])
-
-                if q["tipo"] == "objetiva":
-                    st.write("Alternativas:")
-                    for letra in ["A", "B", "C", "D", "E"]:
-                        st.write(f"{letra}: {q['alternativas'].get(letra, '')}")
-                    st.write(f"Gabarito: {q.get('gabarito', '')}")
-
-                st.write("---")
-
-        st.download_button(
-            label="Baixar avaliação preenchida (.docx)",
-            data=docx_final_bytes,
-            file_name="avaliacao_preenchida.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-
-    except Exception as e:
-        st.error(f"Ocorreu um erro durante a execução: {e}")
