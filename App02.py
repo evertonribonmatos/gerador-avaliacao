@@ -5,6 +5,7 @@ import time
 import tempfile
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
+from collections import Counter
 
 import pdfplumber
 import streamlit as st
@@ -16,6 +17,12 @@ from docx import Document
 from docx.table import _Cell, Table
 from docx.shared import Inches
 from docx.oxml.ns import qn
+
+try:
+    from pdf2image import convert_from_bytes
+    PDF2IMAGE_DISPONIVEL = True
+except Exception:
+    PDF2IMAGE_DISPONIVEL = False
 
 
 # ==========================================
@@ -32,6 +39,10 @@ MAX_TENTATIVAS_POR_QUESTAO = 5
 TAMANHO_MINIMO_CONTEXTO = 180
 SIMILARIDADE_MAXIMA_PERMITIDA = 0.72
 
+LIMITE_PAGINAS_PDF_COMPLETO = 10
+MAX_PAGINAS_RELEVANTES_POR_QUESTAO = 4
+MAX_CARACTERES_CONTEXTO_POR_QUESTAO = 12000
+
 MARCADORES_QUESTOES = {
     1: "primeira",
     2: "segunda",
@@ -45,9 +56,20 @@ MARCADORES_QUESTOES = {
     10: "décima",
 }
 
+STOPWORDS_PT = {
+    "a", "o", "as", "os", "de", "da", "do", "das", "dos", "e", "em", "no", "na",
+    "nos", "nas", "por", "para", "com", "sem", "um", "uma", "uns", "umas",
+    "que", "se", "ao", "aos", "à", "às", "ou", "como", "mais", "menos", "ser",
+    "estar", "ter", "sobre", "entre", "sob", "após", "apos"
+}
+
 CAMINHO_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 if os.path.exists(CAMINHO_TESSERACT):
     pytesseract.pytesseract.tesseract_cmd = CAMINHO_TESSERACT
+
+CAMINHO_POPPLER = r"C:\Program Files\poppler\Library\bin"
+if not os.path.exists(CAMINHO_POPPLER):
+    CAMINHO_POPPLER = None
 
 
 # ==========================================
@@ -171,6 +193,30 @@ def similaridade_textual_simples(a: str, b: str) -> float:
     inter = len(a_tokens & b_tokens)
     uniao = len(a_tokens | b_tokens)
     return inter / uniao if uniao else 0.0
+
+
+def dividir_em_blocos(texto: str, tamanho_bloco: int = 1800, sobreposicao: int = 250) -> List[str]:
+    texto = normalizar_texto(texto)
+    if not texto:
+        return []
+
+    blocos = []
+    inicio = 0
+    while inicio < len(texto):
+        fim = min(len(texto), inicio + tamanho_bloco)
+        bloco = texto[inicio:fim].strip()
+        if bloco:
+            blocos.append(bloco)
+        if fim >= len(texto):
+            break
+        inicio = max(fim - sobreposicao, inicio + 1)
+
+    return blocos
+
+
+def tokenizar_relevancia(texto: str) -> List[str]:
+    tokens = re.findall(r"\w+", normalizar_texto_comparacao(texto))
+    return [t for t in tokens if len(t) > 2 and t not in STOPWORDS_PT]
 
 
 def sanitizar_contexto_gerado(contexto: str, possui_imagem: bool) -> str:
@@ -304,24 +350,77 @@ def validar_bloom(bloom: str) -> str:
 # ==========================================
 # EXTRAÇÃO DE CONTEÚDO BASE
 # ==========================================
-def extrair_texto_pdf_upload(uploaded_file) -> str:
-    textos = []
+def extrair_ocr_paginas_pdf(uploaded_file) -> List[str]:
+    if not PDF2IMAGE_DISPONIVEL:
+        return []
+
+    try:
+        uploaded_file.seek(0)
+        pdf_bytes = uploaded_file.read()
+
+        kwargs = {}
+        if CAMINHO_POPPLER:
+            kwargs["poppler_path"] = CAMINHO_POPPLER
+
+        imagens_paginas = convert_from_bytes(pdf_bytes, dpi=180, **kwargs)
+
+        textos_ocr = []
+        for img in imagens_paginas:
+            try:
+                texto = pytesseract.image_to_string(img, lang="por+eng")
+                textos_ocr.append(normalizar_texto(texto))
+            except Exception:
+                textos_ocr.append("")
+        return textos_ocr
+
+    except Exception:
+        return []
+
+
+def extrair_pdf_base_estruturado(uploaded_file) -> Dict[str, Any]:
     uploaded_file.seek(0)
 
+    paginas_texto = []
     with pdfplumber.open(uploaded_file) as pdf:
+        total_paginas = len(pdf.pages)
+
         for pagina in pdf.pages:
             texto = pagina.extract_text() or ""
-            textos.append(texto)
+            paginas_texto.append(normalizar_texto(texto))
 
-    texto_final = normalizar_texto("\n".join(textos))
-    if not texto_final:
-        raise ValueError("Não foi possível extrair texto do PDF enviado.")
-    return texto_final
+    textos_ocr = extrair_ocr_paginas_pdf(uploaded_file)
+
+    paginas = []
+    for i in range(total_paginas):
+        texto_pdf = paginas_texto[i] if i < len(paginas_texto) else ""
+        texto_ocr = textos_ocr[i] if i < len(textos_ocr) else ""
+
+        combinado = normalizar_texto("\n".join([t for t in [texto_pdf, texto_ocr] if t]))
+        paginas.append({
+            "pagina": i + 1,
+            "texto_pdf": texto_pdf,
+            "texto_ocr": texto_ocr,
+            "conteudo": combinado
+        })
+
+    texto_total = normalizar_texto("\n\n".join(p["conteudo"] for p in paginas if p["conteudo"]))
+
+    if not texto_total:
+        raise ValueError("Não foi possível extrair texto do PDF enviado, nem via OCR.")
+
+    return {
+        "tipo": "pdf",
+        "total_paginas": total_paginas,
+        "paginas": paginas,
+        "texto_total": texto_total,
+        "usar_recorte_inteligente": total_paginas > LIMITE_PAGINAS_PDF_COMPLETO
+    }
 
 
-def extrair_texto_txt_upload(uploaded_file) -> str:
+def extrair_txt_base_estruturado(uploaded_file) -> Dict[str, Any]:
     uploaded_file.seek(0)
     conteudo_bytes = uploaded_file.read()
+
     try:
         texto = conteudo_bytes.decode("utf-8")
     except UnicodeDecodeError:
@@ -330,26 +429,136 @@ def extrair_texto_txt_upload(uploaded_file) -> str:
     texto = normalizar_texto(texto)
     if not texto:
         raise ValueError("O arquivo TXT enviado está vazio.")
-    return texto
+
+    return {
+        "tipo": "txt",
+        "total_paginas": 1,
+        "paginas": [{"pagina": 1, "texto_pdf": texto, "texto_ocr": "", "conteudo": texto}],
+        "texto_total": texto,
+        "usar_recorte_inteligente": False
+    }
 
 
-def obter_conteudo_base_upload(modo_conteudo: str, arquivo_base, conteudo_manual: str) -> str:
+def obter_conteudo_base_estruturado(modo_conteudo: str, arquivo_base, conteudo_manual: str) -> Dict[str, Any]:
     if modo_conteudo == "Texto manual":
         conteudo = normalizar_texto(conteudo_manual)
         if not conteudo:
             raise ValueError("O conteúdo-base manual não pode ficar vazio.")
-        return conteudo
+        return {
+            "tipo": "manual",
+            "total_paginas": 1,
+            "paginas": [{"pagina": 1, "texto_pdf": conteudo, "texto_ocr": "", "conteudo": conteudo}],
+            "texto_total": conteudo,
+            "usar_recorte_inteligente": False
+        }
 
     if arquivo_base is None:
         raise ValueError("Envie um documento-base (.pdf ou .txt).")
 
     nome = arquivo_base.name.lower()
     if nome.endswith(".pdf"):
-        return extrair_texto_pdf_upload(arquivo_base)
+        return extrair_pdf_base_estruturado(arquivo_base)
     elif nome.endswith(".txt"):
-        return extrair_texto_txt_upload(arquivo_base)
+        return extrair_txt_base_estruturado(arquivo_base)
     else:
         raise ValueError("O documento-base deve ser .pdf ou .txt.")
+
+
+# ==========================================
+# RECORTE INTELIGENTE DO CONTEÚDO
+# ==========================================
+def extrair_palavras_chave_questao(dados_usuario: Dict[str, Any], questao_atual: Dict[str, Any]) -> List[str]:
+    partes = [
+        dados_usuario.get("curso", ""),
+        dados_usuario.get("unidade_curricular", ""),
+        questao_atual.get("tipo", ""),
+        questao_atual.get("ocr_imagem", "")
+    ]
+    texto = " ".join(partes)
+    tokens = tokenizar_relevancia(texto)
+    frequencia = Counter(tokens)
+    return [termo for termo, _ in frequencia.most_common(20)]
+
+
+def pontuar_bloco_por_relevancia(bloco: str, palavras_chave: List[str]) -> float:
+    if not bloco.strip():
+        return -1.0
+
+    bloco_norm = normalizar_texto_comparacao(bloco)
+    tokens = tokenizar_relevancia(bloco_norm)
+    if not tokens:
+        return 0.0
+
+    contagem = Counter(tokens)
+    score = 0.0
+
+    for termo in palavras_chave:
+        if termo in contagem:
+            score += 2.5 * contagem[termo]
+
+    score += min(len(tokens) / 120.0, 3.0)
+
+    if any(x in bloco_norm for x in ["procedimento", "seguranca", "falha", "inspe", "diagn", "ensaio", "ajuste"]):
+        score += 2.0
+
+    return score
+
+
+def selecionar_contexto_relevante_para_questao(
+    conteudo_base_estruturado: Dict[str, Any],
+    dados_usuario: Dict[str, Any],
+    questao_atual: Dict[str, Any],
+    questoes_anteriores: List[Dict[str, Any]]
+) -> str:
+    texto_total = conteudo_base_estruturado["texto_total"]
+
+    if not conteudo_base_estruturado.get("usar_recorte_inteligente", False):
+        return texto_total
+
+    palavras_chave = extrair_palavras_chave_questao(dados_usuario, questao_atual)
+
+    blocos_pontuados = []
+    for pagina in conteudo_base_estruturado["paginas"]:
+        conteudo = pagina.get("conteudo", "")
+        if not conteudo:
+            continue
+
+        blocos = dividir_em_blocos(conteudo, tamanho_bloco=1800, sobreposicao=250)
+        for bloco in blocos:
+            score = pontuar_bloco_por_relevancia(bloco, palavras_chave)
+            blocos_pontuados.append({
+                "pagina": pagina["pagina"],
+                "score": score,
+                "bloco": bloco
+            })
+
+    blocos_pontuados.sort(key=lambda x: x["score"], reverse=True)
+
+    selecionados = []
+    caracteres = 0
+    paginas_usadas = set()
+
+    for item in blocos_pontuados:
+        if len(paginas_usadas) >= MAX_PAGINAS_RELEVANTES_POR_QUESTAO and item["pagina"] not in paginas_usadas:
+            continue
+
+        bloco = item["bloco"]
+        tamanho = len(bloco)
+
+        if caracteres + tamanho > MAX_CARACTERES_CONTEXTO_POR_QUESTAO:
+            continue
+
+        selecionados.append(f"[Página {item['pagina']}]\n{bloco}")
+        paginas_usadas.add(item["pagina"])
+        caracteres += tamanho
+
+        if caracteres >= MAX_CARACTERES_CONTEXTO_POR_QUESTAO * 0.9:
+            break
+
+    if not selecionados:
+        return texto_total[:MAX_CARACTERES_CONTEXTO_POR_QUESTAO]
+
+    return "\n\n".join(selecionados)
 
 
 # ==========================================
@@ -370,7 +579,7 @@ def montar_resumo_questoes_anteriores(questoes_anteriores: List[Dict[str, Any]])
 
 
 def montar_prompt_questao_unica(
-    conteudo_base: str,
+    conteudo_base_recortado: str,
     dados_usuario: Dict[str, Any],
     questao_atual: Dict[str, Any],
     questoes_anteriores: List[Dict[str, Any]],
@@ -444,7 +653,7 @@ QUESTÕES JÁ GERADAS:
 {resumo_anteriores}
 
 REGRAS OBRIGATÓRIAS:
-- Baseie-se EXCLUSIVAMENTE no conteúdo-base.
+- Baseie-se EXCLUSIVAMENTE no conteúdo-base disponibilizado para esta questão.
 - Não repita cenário, estrutura, foco técnico ou redação das questões anteriores.
 - Crie situação profissional plausível da área industrial.
 - O enunciado deve ser completo, técnico e suficientemente detalhado.
@@ -490,8 +699,8 @@ Se a questão for discursiva:
 - "alternativas" deve ser {{}}
 - "gabarito" deve ser ""
 
-CONTEÚDO-BASE:
-{conteudo_base}
+CONTEÚDO-BASE DISPONÍVEL PARA ESTA QUESTÃO:
+{conteudo_base_recortado}
 """
 
 
@@ -602,7 +811,7 @@ def validar_conjunto_final_questoes(questoes: List[Dict[str, Any]]) -> List[Dict
 # GERAÇÃO DAS QUESTÕES COM IA
 # ==========================================
 def gerar_questao_unica_com_ia(
-    conteudo_base: str,
+    conteudo_base_estruturado: Dict[str, Any],
     dados_usuario: Dict[str, Any],
     questao_config: Dict[str, Any],
     questoes_anteriores: List[Dict[str, Any]]
@@ -610,8 +819,15 @@ def gerar_questao_unica_com_ia(
     ultimo_erro = ""
 
     for tentativa in range(1, MAX_TENTATIVAS_POR_QUESTAO + 1):
+        conteudo_base_recortado = selecionar_contexto_relevante_para_questao(
+            conteudo_base_estruturado=conteudo_base_estruturado,
+            dados_usuario=dados_usuario,
+            questao_atual=questao_config,
+            questoes_anteriores=questoes_anteriores
+        )
+
         prompt = montar_prompt_questao_unica(
-            conteudo_base=conteudo_base,
+            conteudo_base_recortado=conteudo_base_recortado,
             dados_usuario=dados_usuario,
             questao_atual=questao_config,
             questoes_anteriores=questoes_anteriores,
@@ -645,13 +861,16 @@ def gerar_questao_unica_com_ia(
     )
 
 
-def gerar_questoes_ia(conteudo_base: str, dados_usuario: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str, str]:
+def gerar_questoes_ia(
+    conteudo_base_estruturado: Dict[str, Any],
+    dados_usuario: Dict[str, Any]
+) -> Tuple[List[Dict[str, Any]], str, str]:
     questoes_geradas = []
     respostas_brutas = []
 
     for questao_config in dados_usuario["questoes"]:
         questao, resposta = gerar_questao_unica_com_ia(
-            conteudo_base=conteudo_base,
+            conteudo_base_estruturado=conteudo_base_estruturado,
             dados_usuario=dados_usuario,
             questao_config=questao_config,
             questoes_anteriores=questoes_geradas
@@ -969,11 +1188,29 @@ if submitted:
         }
 
         with st.spinner("Extraindo conteúdo-base..."):
-            conteudo_base = obter_conteudo_base_upload(
+            conteudo_base_estruturado = obter_conteudo_base_estruturado(
                 modo_conteudo=modo_conteudo,
                 arquivo_base=arquivo_base,
                 conteudo_manual=conteudo_base_manual
             )
+
+        if conteudo_base_estruturado["tipo"] == "pdf":
+            if conteudo_base_estruturado["usar_recorte_inteligente"]:
+                st.warning(
+                    f"PDF com {conteudo_base_estruturado['total_paginas']} páginas detectado. "
+                    f"O sistema vai usar recorte inteligente do conteúdo para evitar sobrecarga no prompt."
+                )
+            else:
+                st.info(
+                    f"PDF com {conteudo_base_estruturado['total_paginas']} páginas detectado. "
+                    f"O conteúdo completo será usado."
+                )
+
+            if not PDF2IMAGE_DISPONIVEL:
+                st.info("pdf2image não está disponível. OCR de imagens do PDF pode não ocorrer.")
+
+            if PDF2IMAGE_DISPONIVEL and CAMINHO_POPPLER is None:
+                st.info("Poppler não encontrado no caminho configurado. O OCR do PDF pode falhar no Windows.")
 
         progresso = st.progress(0)
         status = st.empty()
@@ -984,7 +1221,7 @@ if submitted:
         for idx, questao_config in enumerate(dados_usuario["questoes"], start=1):
             status.info(f"Gerando questão {idx:02d} de {TOTAL_QUESTOES}...")
             questao, resposta = gerar_questao_unica_com_ia(
-                conteudo_base=conteudo_base,
+                conteudo_base_estruturado=conteudo_base_estruturado,
                 dados_usuario=dados_usuario,
                 questao_config=questao_config,
                 questoes_anteriores=questoes_geradas
