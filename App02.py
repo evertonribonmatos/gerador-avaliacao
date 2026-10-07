@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import math
 import tempfile
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
@@ -504,21 +505,88 @@ def pontuar_bloco_por_relevancia(bloco: str, palavras_chave: List[str]) -> float
     return score
 
 
-def selecionar_contexto_relevante_para_questao(
+def obter_faixa_paginas_proporcional(
+    total_paginas: int,
+    numero_questao: int,
+    total_questoes: int = TOTAL_QUESTOES,
+    margem_extra: int = 1
+) -> Tuple[int, int]:
+    """
+    Divide o PDF em faixas aproximadamente proporcionais.
+    Retorna páginas no formato humano: início e fim (1-based).
+    """
+    if total_paginas <= 0:
+        return 1, 1
+
+    inicio = math.floor((numero_questao - 1) * total_paginas / total_questoes) + 1
+    fim = math.floor(numero_questao * total_paginas / total_questoes)
+
+    if fim < inicio:
+        fim = inicio
+
+    inicio = max(1, inicio - margem_extra)
+    fim = min(total_paginas, fim + margem_extra)
+
+    return inicio, fim
+
+
+def extrair_paginas_da_faixa(
+    conteudo_base_estruturado: Dict[str, Any],
+    pagina_inicio: int,
+    pagina_fim: int
+) -> List[Dict[str, Any]]:
+    paginas = conteudo_base_estruturado.get("paginas", [])
+    return [
+        p for p in paginas
+        if pagina_inicio <= p.get("pagina", 0) <= pagina_fim
+    ]
+
+
+def penalizar_similaridade_com_questoes_anteriores(
+    bloco: str,
+    questoes_anteriores: List[Dict[str, Any]]
+) -> float:
+    if not questoes_anteriores:
+        return 0.0
+
+    similaridades = []
+    for q in questoes_anteriores:
+        contexto_ant = q.get("contexto", "")
+        sim = similaridade_textual_simples(bloco, contexto_ant)
+        similaridades.append(sim)
+
+    if not similaridades:
+        return 0.0
+
+    return max(similaridades)
+
+
+def selecionar_contexto_proporcional_para_questao(
     conteudo_base_estruturado: Dict[str, Any],
     dados_usuario: Dict[str, Any],
     questao_atual: Dict[str, Any],
     questoes_anteriores: List[Dict[str, Any]]
 ) -> str:
-    texto_total = conteudo_base_estruturado["texto_total"]
+    total_paginas = conteudo_base_estruturado.get("total_paginas", 1)
+    numero_questao = questao_atual["numero"]
 
-    if not conteudo_base_estruturado.get("usar_recorte_inteligente", False):
-        return texto_total
+    pagina_inicio, pagina_fim = obter_faixa_paginas_proporcional(
+        total_paginas=total_paginas,
+        numero_questao=numero_questao,
+        total_questoes=TOTAL_QUESTOES,
+        margem_extra=1
+    )
+
+    paginas_faixa = extrair_paginas_da_faixa(
+        conteudo_base_estruturado,
+        pagina_inicio,
+        pagina_fim
+    )
 
     palavras_chave = extrair_palavras_chave_questao(dados_usuario, questao_atual)
 
     blocos_pontuados = []
-    for pagina in conteudo_base_estruturado["paginas"]:
+    for pagina in paginas_faixa:
         conteudo = pagina.get("conteudo", "")
         if not conteudo:
             continue
@@ -526,11 +594,21 @@ def selecionar_contexto_relevante_para_questao(
         blocos = dividir_em_blocos(conteudo, tamanho_bloco=1800, sobreposicao=250)
         for bloco in blocos:
             score = pontuar_bloco_por_relevancia(bloco, palavras_chave)
+            penalidade = penalizar_similaridade_com_questoes_anteriores(bloco, questoes_anteriores)
+            score_final = score - (penalidade * 4.0)
+
             blocos_pontuados.append({
                 "pagina": pagina["pagina"],
-                "score": score,
+                "score": score_final,
                 "bloco": bloco
             })
+
+    if not blocos_pontuados:
+        texto_faixa = "\n\n".join(
+            f"[Página {p['pagina']}]\n{p['conteudo']}"
+            for p in paginas_faixa if p.get("conteudo")
+        )
+        return texto_faixa[:MAX_CARACTERES_CONTEXTO_POR_QUESTAO]
 
     blocos_pontuados.sort(key=lambda x: x["score"], reverse=True)
 
@@ -539,11 +617,11 @@ def selecionar_contexto_relevante_para_questao(
     paginas_usadas = set()
 
     for item in blocos_pontuados:
-        if len(paginas_usadas) >= MAX_PAGINAS_RELEVANTES_POR_QUESTAO and item["pagina"] not in paginas_usadas:
-            continue
-
         bloco = item["bloco"]
         tamanho = len(bloco)
+
+        if item["pagina"] not in paginas_usadas and len(paginas_usadas) >= MAX_PAGINAS_RELEVANTES_POR_QUESTAO:
+            continue
 
         if caracteres + tamanho > MAX_CARACTERES_CONTEXTO_POR_QUESTAO:
             continue
@@ -556,9 +634,32 @@ def selecionar_contexto_relevante_para_questao(
             break
 
     if not selecionados:
-        return texto_total[:MAX_CARACTERES_CONTEXTO_POR_QUESTAO]
+        texto_faixa = "\n\n".join(
+            f"[Página {p['pagina']}]\n{p['conteudo']}"
+            for p in paginas_faixa if p.get("conteudo")
+        )
+        return texto_faixa[:MAX_CARACTERES_CONTEXTO_POR_QUESTAO]
 
     return "\n\n".join(selecionados)
+
+
+def selecionar_contexto_relevante_para_questao(
+    conteudo_base_estruturado: Dict[str, Any],
+    dados_usuario: Dict[str, Any],
+    questao_atual: Dict[str, Any],
+    questoes_anteriores: List[Dict[str, Any]]
+) -> str:
+    texto_total = conteudo_base_estruturado["texto_total"]
+
+    if not conteudo_base_estruturado.get("usar_recorte_inteligente", False):
+        return texto_total
+
+    return selecionar_contexto_proporcional_para_questao(
+        conteudo_base_estruturado=conteudo_base_estruturado,
+        dados_usuario=dados_usuario,
+        questao_atual=questao_atual,
+        questoes_anteriores=questoes_anteriores
+    )
 
 
 # ==========================================
@@ -654,6 +755,8 @@ QUESTÕES JÁ GERADAS:
 
 REGRAS OBRIGATÓRIAS:
 - Baseie-se EXCLUSIVAMENTE no conteúdo-base disponibilizado para esta questão.
+- Esta questão deve explorar prioritariamente o conteúdo do recorte fornecido para ela, evitando repetir o foco técnico das questões anteriores.
+- Se houver sobreposição temática com questões anteriores, mude o enfoque prático, o problema técnico e a habilidade exigida.
 - Não repita cenário, estrutura, foco técnico ou redação das questões anteriores.
 - Crie situação profissional plausível da área industrial.
 - O enunciado deve ser completo, técnico e suficientemente detalhado.
@@ -1198,7 +1301,7 @@ if submitted:
             if conteudo_base_estruturado["usar_recorte_inteligente"]:
                 st.warning(
                     f"PDF com {conteudo_base_estruturado['total_paginas']} páginas detectado. "
-                    f"O sistema vai usar recorte inteligente do conteúdo para evitar sobrecarga no prompt."
+                    f"O sistema vai usar recorte inteligente com distribuição proporcional do conteúdo."
                 )
             else:
                 st.info(
