@@ -4,7 +4,7 @@ import json
 import time
 import math
 import tempfile
-import tempfile
+import platform
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
 from collections import Counter
@@ -25,7 +25,6 @@ try:
     PDF2IMAGE_DISPONIVEL = True
 except Exception:
     PDF2IMAGE_DISPONIVEL = False
-    import platform
 
 # Detecta se está rodando no Windows ou no Linux (Streamlit Cloud)
 if platform.system() == "Windows":
