@@ -24,7 +24,17 @@ try:
     PDF2IMAGE_DISPONIVEL = True
 except Exception:
     PDF2IMAGE_DISPONIVEL = False
+    import platform
 
+# Detecta se está rodando no Windows ou no Linux (Streamlit Cloud)
+if platform.system() == "Windows":
+    # No seu computador local (Windows)
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    POPPLER_PATH = r"C:\Program Files\poppler\Library\bin"
+else:
+    # No Streamlit Cloud (Linux)
+    # Não precisa definir caminho fixo, pois o Linux já reconhece Tesseract e Poppler no PATH do sistema
+    POPPLER_PATH = None
 
 # ==========================================
 # CONFIGURAÇÕES
