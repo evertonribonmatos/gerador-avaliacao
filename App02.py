@@ -373,7 +373,7 @@ def extrair_ocr_paginas_pdf(uploaded_file) -> List[str]:
         if CAMINHO_POPPLER:
             kwargs["poppler_path"] = CAMINHO_POPPLER
 
-        imagens_paginas = convert_from_bytes(pdf_bytes, dpi=180, **kwargs)
+        imagens_paginas = convert_from_bytes(pdf_bytes, dpi=100, **kwargs)
 
         textos_ocr = []
         for img in imagens_paginas:
