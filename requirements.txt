@@ -1,7 +1,8 @@
 streamlit
 pdfplumber
-python-dotenv
-groq
-python-docx
+pdf2image
 pytesseract
 Pillow
+python-docx
+groq
+python-dotenv
